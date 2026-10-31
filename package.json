@@ -2,6 +2,10 @@
     "name": "microsoft-rewards-script",
     "version": "4.3.2.4",
     "description": "Automatically do tasks for Microsoft Rewards but in TS!",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/youkum/Microsoft-Rewards-Script.git"
+    },
     "author": "Netsky",
     "license": "GPL-3.0-or-later",
     "engines": {

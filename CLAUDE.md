@@ -2,6 +2,7 @@
 
 ## Project Summary
 Microsoft Rewards Script (China Edition with WebUI Dashboard).
+- Repository: https://github.com/youkum/Microsoft-Rewards-Script (Branch: `V4-china`)
 A TypeScript & Patchright-based automated agent for Microsoft Rewards tasks, featuring a resilient 6-tier points fallback system, adaptive login state machine, and a companion WebUI control panel.
 
 ## Common Developer Commands

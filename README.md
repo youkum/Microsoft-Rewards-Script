@@ -2,6 +2,8 @@
 
 # 微软奖励自动化脚本（V4-china 优化增强版）
 
+[![Repository](https://img.shields.io/badge/GitHub-youkum%2FMicrosoft--Rewards--Script-blue.svg)](https://github.com/youkum/Microsoft-Rewards-Script)
+[![Branch](https://img.shields.io/badge/branch-V4--china-orange.svg)](https://github.com/youkum/Microsoft-Rewards-Script/tree/V4-china)
 [![Version](https://img.shields.io/badge/version-4.3.2.4-blue.svg)](./package.json)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D24-green.svg)](./package.json)
@@ -15,15 +17,13 @@
 
 </div>
 
-> ℹ️ **分支选择建议**
+> ℹ️ **分支与项目说明**
 >
-> - **`main` 分支（v3，稳定版）**：已兼容微软新版 UI，实测未发现明显异常，可放心日常使用。
-> - **`V4-china` 分支（v4 新架构，基本可用，本分支）**：搜索、活动、签到、Read-to-Earn、微信推送（PushPlus / ClawBot）等核心功能已实测通过（2026-08），**可以切换日常使用**；新架构仍在迭代，偶发小问题属正常，追求稳定可继续留在 `main` 分支。
->
-> 两分支配置文件结构不同，**互不兼容**；本分支账号改用 `.env` 环境变量配置（不再使用 `accounts.json`），从 v3 迁移请按本文档重新配置 `.env` / `config.json`。
+> - **本分支（`V4-china`）**：本项目的默认主分支。全面适配现代 Bing Rewards 架构，已实测通过并长期稳定运行，集成全量积分画像、现代化拦截页自适应跳过以及 WebUI 仪表盘控制台，**推荐直接使用本分支部署**。
+> - 本分支账号改用 `.env` 环境变量统一配置（不再使用旧版 `accounts.json`）。
 
 > [!TIP]
-> 本分支仅支持**新版（modern）Bing Rewards 面板**，不支持旧版面板。账户还在旧版面板的请使用本仓库 [`main` 分支](https://github.com/chiihero/Microsoft-Rewards-Script/tree/main)（v3）。
+> 本分支专为**新版（modern）Bing Rewards 面板**深度打造。代码已推送到官方主仓库：[`youkum/Microsoft-Rewards-Script`](https://github.com/youkum/Microsoft-Rewards-Script)。
 
 ---
 
@@ -127,10 +127,11 @@
 1. 下载或克隆源代码：
 
     ```bash
-    git clone -b V4-china https://github.com/chiihero/Microsoft-Rewards-Script.git
+    git clone -b V4-china https://github.com/youkum/Microsoft-Rewards-Script.git
+    cd Microsoft-Rewards-Script
     ```
 
-    > 国内无法直连 GitHub 时可用镜像加速：在 URL 前加 `https://gh-proxy.com/`，或在本仓库页面 "Code → Download ZIP" 下载。
+    > 国内无法直连 GitHub 时可用镜像加速：在 URL 前加 `https://gh-proxy.com/`，或在本项目页面 "Code → Download ZIP" 下载。
 
 2. 双击运行 `setup.bat`：自动安装 Node.js 24、生成 `.env` 与 `config.json`、安装依赖并构建
 3. 编辑 `.env`，填入账户信息（`ACCOUNT_1_EMAIL` / `ACCOUNT_1_PASSWORD` 等）
@@ -142,7 +143,13 @@
 <details>
 <summary><b>🛠 手动设置（自动设置失败时使用）</b></summary>
 
-1. 克隆源代码（同上）
+1. 克隆源代码：
+
+    ```bash
+    git clone -b V4-china https://github.com/youkum/Microsoft-Rewards-Script.git
+    cd Microsoft-Rewards-Script
+    ```
+
 2. 安装 Node.js 24+
 3. 安装依赖包：
 
@@ -182,71 +189,80 @@
 
 ---
 
-## 🐳 Docker 部署
+## 🐳 Linux / Docker 部署（生产推荐）
 
 <details open>
-<summary><b>部署步骤</b></summary>
+<summary><b>完整部署步骤（含 WebUI 面板）</b></summary>
 
 > [!IMPORTANT]
-> 本仓库 `compose.yaml` 默认 `build: .` 本地构建（运行本分支代码）。**不要**改回 `ghcr.io/thenetsky/...` 官方镜像——那是原作者的原版代码，不含中国热搜 / PushPlus 等国内适配。
+> 本仓库 `compose.yaml` 默认使用 `dockerfile: Dockerfile.cn` 本地构建（内置阿里云源与 IPv4 优化，构建速度极快）。**请勿**使用官方镜像，否则不含国内热搜源与 WebUI 日志增强适配。
 
-### 1. 准备账号文件（.env）
+### 1. 克隆本项目代码
+
+```bash
+git clone -b V4-china https://github.com/youkum/Microsoft-Rewards-Script.git
+cd Microsoft-Rewards-Script
+```
+
+### 2. 准备账号配置文件（.env）
 
 ```bash
 cp env.example .env
 ```
 
-编辑 `.env`，至少填一个账号：
+编辑 `.env`，至少配置一个账户：
 
 ```dotenv
 ACCOUNT_1_EMAIL=you@example.com
 ACCOUNT_1_PASSWORD=your_password
 ```
 
-> 多账号按 `ACCOUNT_2_*`、`ACCOUNT_3_*` 递增（编号无需连续，按编号升序运行）。完整字段见 `env.example`。
+> 多账号按 `ACCOUNT_2_*`、`ACCOUNT_3_*` 递增配置。如启用 WebUI 仪表盘控制，请在 `.env` 末尾保留或设置 `API_TOKEN`（如 `API_TOKEN=your_secure_token`）。
 
-> ⚠️ **Docker 用户注意：`.env` 不会自动传入容器**。Compose 只把同目录 `.env` 用于变量替换；若你自行编写/裁剪了 `compose.yaml`，必须保留 `env_file` 段（本仓库模板已内置），否则容器里一个账号都读不到：
->
-> ```yaml
-> services:
->   microsoft-rewards-script:
->     env_file:
->       - path: .env
-> ```
->
-> 另外用**列表式** `environment:`（`- KEY=value`）时值**不要加引号**——引号会成为值的一部分（如 `- CRON_SCHEDULE="0 9 * * *"` 会让 cron 表达式带引号而失效）；映射式（`KEY: value`）则按 YAML 规则正常加引号。
-
-### 2. 编辑 compose.yaml（可选）
-
-默认配置开箱即用，如需调整取消对应行注释即可：
-
-- `TZ`：时区（默认 `Asia/Shanghai`）
-- `CRON_SCHEDULE`：调度（默认 `0 7 * * *`，每天 7 点）
-- `RUN_ON_START`：容器启动时是否立即跑一次（默认 `true`）
-- `CONFIG_SEARCH_QUERY_ENGINES`：查询源，国内推荐 `china,local`
-- `CONFIG_CHINA_API_APPKEY`：gmya.net appkey，解除免费档限流（留空走免费档）
-- `CONFIG_PUSHPLUS_*` / `CONFIG_SERVERCHAN_*` / `CONFIG_CLAWBOT_*`：微信推送
-
-> 完整的 `CONFIG_*` 环境变量列表见[配置参考](#️-配置参考)各表格。`CONFIG_*` 每次启动都会覆盖 `./config/config.json`。
-
-### 3. 构建并启动
+### 3. 构建并启动主容器
 
 ```bash
 docker compose up -d --build
 ```
 
-> **重要**：改了代码或 Dockerfile 后必须加 `--build` 重建镜像，否则跑的还是旧镜像。
+> **重要**：后续代码拉取更新（`git pull`）后，加 `--build` 重新构建镜像生效：
+> ```bash
+> git pull origin V4-china
+> docker compose up -d --build
+> ```
 
-### 4. 数据持久化
+### 4. 数据持久化与查看日志
 
-容器挂载了两个目录，重建容器不丢数据：
+容器挂载了两个关键目录，升级重建不丢失登录状态：
+- `./config/`：行为配置文件（首次运行自动从 `config.example.json` 生成）
+- `./sessions/`：账户会话与浏览器指纹（首次成功登录后复用 Cookie）
 
-- `./config/`：配置文件（首次运行自动生成 `config.json`）
-- `./sessions/`：登录会话（首次登录后 cookie 存这里，后续自动复用）
+```bash
+docker compose logs -f          # 实时查看运行日志
+docker compose down             # 停止容器
+docker compose restart          # 快捷重启
+```
 
-> 💡 使用微信 ClawBot 推送时，建议先在本地跑一次完成扫码，再把生成的 `clawbot-auth.json` 挂载进容器（或配合 `API_MODE` 在容器内完成扫码）。
+### 5. 部署配套 WebUI 仪表盘（可选，端口 8890）
 
-### 常用命令
+本项目已完美集成 WebUI 仪表盘（基于 `mgrimace/rewards-dashboard`）。
+在同服务器下，可一键部署仪表盘容器：
+
+```bash
+docker run -d \
+  --name rewards-dashboard \
+  --restart unless-stopped \
+  -p 8890:8890 \
+  -e CONTROL_API_URL=http://microsoft-rewards-script:3010 \
+  -e CONTROL_API_TOKEN=${API_TOKEN} \
+  -e DASHBOARD_USERNAME=admin \
+  -e DASHBOARD_PASSWORD=admin_password \
+  --network microsoft-rewards-script_default \
+  ghcr.io/mgrimace/rewards-dashboard:latest
+```
+部署后在浏览器访问 `http://<服务器IP>:8890` 即可实时查看任务进度与积分图表！
+
+</details>
 
 ```bash
 docker compose up -d --build   # 构建+启动

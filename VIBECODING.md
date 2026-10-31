@@ -2,6 +2,13 @@
 
 > 本文档专为 **Vibe-Coding**（人机协同、AI 辅助编程，如 Cursor、Trae、Windsurf、Claude Code、Devin 等）量身打造，系统梳理项目核心架构、扩展模式、开源引用与调试最佳实践。
 
+- **官方主仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script)
+- **主力维护分支**: `V4-china`
+- **一键克隆命令**:
+  ```bash
+  git clone -b V4-china https://github.com/youkum/Microsoft-Rewards-Script.git
+  ```
+
 ---
 
 ## 📑 目录
