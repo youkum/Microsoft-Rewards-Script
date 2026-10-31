@@ -32,6 +32,7 @@ type LoginState =
     | 'LOGIN_PASSWORDLESS'
     | 'PASSWORDLESS_SEND_CODE'
     | 'OTP_CODE_ENTRY'
+    | 'INTERSTITIAL_SKIP'
     | 'UNKNOWN'
     | 'CHROMEWEBDATA_ERROR'
 
@@ -56,30 +57,39 @@ export class Login {
     private passwordlessMethodSelected = false
 
     private readonly selectors = {
-        primaryButton: 'button[data-testid="primaryButton"]',
-        secondaryButton: 'button[data-testid="secondaryButton"]',
-        footerAction: '[data-testid="viewFooter"] [role="button"]',
-        signInTile: '[data-testid="tile"]',
-        emailIconOld: 'img[data-testid="accessibleImg"][src*="picker_verify_email"]',
-        passwordlessOptionOld: 'img[data-testid="accessibleImg"][src*="picker_remote_ngc"]',
-        recoveryEmail: '[data-testid="proof-confirmation"]',
-        emailVerificationInput: 'input#proof-confirmation-email-input',
-        accountLocked: '#serviceAbuseLandingTitle',
-        errorAlert: 'div[role="alert"]',
-        passwordEntry: '[data-testid="passwordEntry"]',
-        emailEntry: 'input#usernameEntry',
-        kmsiVideo: '[data-testid="kmsiVideo"]',
+        primaryButton:
+            'button[data-testid="primaryButton"], input#idSIButton9, button#idSIButton9, button[type="submit"], input[type="submit"], button#acceptButton',
+        secondaryButton:
+            'button[data-testid="secondaryButton"], input#idBtn_Back, button#idBtn_Back, #iCancel, #iShowSkip, a#iShowSkip, button:has-text("No thanks"), button:has-text("以后再说")',
+        footerAction: '[data-testid="viewFooter"] [role="button"], #viewFooter [role="button"], a#cantAccessAccount',
+        signInTile:
+            '[data-testid="tile"], div[data-test="accountTile"], .table-cell[data-test="accountTile"], #picker[role="listbox"] div[role="option"], .tile-container',
+        emailIconOld: 'img[data-testid="accessibleImg"][src*="picker_verify_email"], [data-value*="Email"]',
+        passwordlessOptionOld:
+            'img[data-testid="accessibleImg"][src*="picker_remote_ngc"], [data-value*="PhoneAppNotification"]',
+        recoveryEmail: '[data-testid="proof-confirmation"], #proof-confirmation',
+        emailVerificationInput: 'input#proof-confirmation-email-input, input#otc-confirmation-input',
+        accountLocked: '#serviceAbuseLandingTitle, #idTd_Tile_ErrorMsg_Login',
+        errorAlert: 'div[role="alert"], #usernameError, #passwordError',
+        passwordEntry:
+            '[data-testid="passwordEntry"], input#passwordEntry, input[name="passwd"], input#i0118, input[type="password"]',
+        emailEntry:
+            'input#usernameEntry, input[data-testid="usernameEntry"], input[name="loginfmt"], input#i0116, input[type="email"]',
+        kmsiVideo:
+            '[data-testid="kmsiVideo"], #kmsiTitle, input#KmsiCheckboxField, input[name="DontShowAgain"], div:has-text("保持登录状态"), div:has-text("Stay signed in")',
         passKeyVideo: '[data-testid="biometricVideo"]',
         passKeyError: '[data-testid="registrationImg"]',
         passwordlessCheck: '[data-testid="deviceShieldCheckmarkVideo"]',
-        passwordlessNumber: '[data-testid="displaySign"]',
+        passwordlessNumber: '[data-testid="displaySign"], #displaySign',
         totpInput: 'input[name="otc"]',
         totpInputOld: 'form[name="OneTimeCodeViewForm"]',
-        identityBanner: '[data-testid="identityBanner"]',
-        otpCodeEntry: '[data-testid="codeEntry"]',
-        backButton: '#back-button',
-        bingProfile: '#id_n',
-        otpInput: 'div[data-testid="codeEntry"]'
+        identityBanner: '[data-testid="identityBanner"], #displayName, #identityBanner',
+        otpCodeEntry: '[data-testid="codeEntry"], input[name="otc"]',
+        backButton: '#back-button, button[data-testid="backButton"], #idBtn_Back, button[aria-label="Back"]',
+        bingProfile: '#id_n, #id_rh, #id_rc, .id_name',
+        otpInput: 'div[data-testid="codeEntry"]',
+        interstitialSkip:
+            '#iShowSkip, a#iShowSkip, #iCancel, a:has-text("以后再说"), a:has-text("暂且跳过"), a:has-text("Skip for now"), button:has-text("No thanks"), button:has-text("以后再说"), button:has-text("取消")'
     } as const
 
     constructor(private bot: MicrosoftRewardsBot) {
@@ -207,6 +217,7 @@ export class Login {
             [this.selectors.emailEntry, 'EMAIL_INPUT'],
             [this.selectors.recoveryEmail, 'RECOVERY_EMAIL_INPUT'],
             [this.selectors.emailVerificationInput, 'EMAIL_VERIFICATION_INPUT'],
+            [this.selectors.interstitialSkip, 'INTERSTITIAL_SKIP'],
             [this.selectors.kmsiVideo, 'KMSI_PROMPT'],
             [this.selectors.passKeyVideo, 'PASSKEY_VIDEO'],
             [this.selectors.passKeyError, 'PASSKEY_ERROR'],
@@ -284,20 +295,29 @@ export class Login {
         }
 
         if (foundStates.includes('ERROR_ALERT')) {
-            const errorIsReal = hostname === 'login.live.com' && !foundStates.includes('2FA_TOTP')
-            this.bot.logger.debug(
-                this.bot.isMobile,
-                'DETECT-STATE',
-                `发现ERROR_ALERT - 主机名: ${hostname}, 有2FA: ${foundStates.includes('2FA_TOTP')}, 视为真实错误: ${errorIsReal}`
-            )
-            if (errorIsReal) return 'ERROR_ALERT'
-            foundStates = foundStates.filter(s => s !== 'ERROR_ALERT')
+            const hasActionableInput =
+                foundStates.includes('PASSWORD_INPUT') ||
+                foundStates.includes('EMAIL_INPUT') ||
+                foundStates.includes('KMSI_PROMPT') ||
+                foundStates.includes('2FA_TOTP') ||
+                foundStates.includes('SIGN_IN_METHOD_PICKER')
+
+            if (hasActionableInput) {
+                this.bot.logger.debug(
+                    this.bot.isMobile,
+                    'DETECT-STATE',
+                    '页面同时存在可操作输入状态，暂缓 ERROR_ALERT 优先执行交互'
+                )
+                foundStates = foundStates.filter(s => s !== 'ERROR_ALERT')
+            }
         }
 
         const priorities: LoginState[] = [
             'ACCOUNT_LOCKED',
+            'ERROR_ALERT',
             'PASSKEY_VIDEO',
             'PASSKEY_ERROR',
+            'INTERSTITIAL_SKIP',
             'KMSI_PROMPT',
             'LOGIN_PASSWORDLESS',
             'PASSWORD_INPUT',
@@ -470,7 +490,7 @@ export class Login {
                 // 页面上可能同时存在多个 role=alert 容器（含跳转瞬间的空 aria-live 区域），
                 // 只有携带非空文本的才是真实错误
                 const alertEls = page.locator(this.selectors.errorAlert)
-                const alertCount = await alertEls.count()
+                const alertCount = await alertEls.count().catch(() => 0)
                 let errorMsg = ''
                 for (let i = 0; i < alertCount; i++) {
                     const text = (await alertEls.nth(i).innerText().catch(() => '')).trim()
@@ -484,8 +504,130 @@ export class Login {
                     await this.bot.utils.wait(2000)
                     return true
                 }
-                this.bot.logger.error(this.bot.isMobile, 'LOGIN', `账户错误: ${errorMsg}`)
-                throw new Error(`Microsoft login error: ${errorMsg}`)
+
+                const lowerMsg = errorMsg.toLowerCase()
+
+                // Cookie 同意横幅或条款提示会被误判为错误告警：尝试关闭并继续，不视为登录失败
+                const cookieBannerPatterns = [
+                    '使用可选的 cookie',
+                    '可选的 cookie',
+                    'we use optional cookies',
+                    'optional cookies',
+                    'cookie',
+                    'cookies',
+                    '隐私',
+                    'privacy',
+                    '条款',
+                    'terms',
+                    '声明',
+                    'statement',
+                    '接受',
+                    'accept',
+                    '同意',
+                    'agree'
+                ]
+                if (cookieBannerPatterns.some(p => lowerMsg.includes(p))) {
+                    this.bot.logger.warn(
+                        this.bot.isMobile,
+                        'LOGIN',
+                        `检测到横幅/同意提示被捕获，尝试关闭并继续 | 文本=${errorMsg.slice(0, 60)}`
+                    )
+                    const acceptSelectors = [
+                        'button#acceptButton',
+                        '[data-testid="accept-button"]',
+                        'button#idSIButton9',
+                        'input#idSIButton9',
+                        'button:has-text("接受")',
+                        'button:has-text("Accept")',
+                        'button:has-text("同意")',
+                        'button:has-text("OK")',
+                        'button:has-text("继续")',
+                        'button:has-text("Continue")'
+                    ]
+                    for (const sel of acceptSelectors) {
+                        try {
+                            const el = page.locator(sel).first()
+                            if (await el.isVisible({ timeout: 200 }).catch(() => false)) {
+                                await el.click({ timeout: 2000 })
+                                this.bot.logger.info(this.bot.isMobile, 'LOGIN', `已点击同意/确认按钮 | 选择器=${sel}`)
+                                break
+                            }
+                        } catch {
+                            // 尝试下一个选择器
+                        }
+                    }
+                    await this.bot.utils.wait(2000)
+                    return true
+                }
+
+                // 检查是否为致命凭据错误（密码错误、账号锁定或不存在）
+                const fatalPatterns = [
+                    '密码不正确',
+                    '密码错误',
+                    'incorrect password',
+                    'wrong password',
+                    '不存在',
+                    "doesn't exist",
+                    'does not exist',
+                    '已锁定',
+                    'locked',
+                    'blocked',
+                    '已被阻止',
+                    '已被暂停',
+                    'suspended',
+                    '尝试次数过多',
+                    'too many attempts'
+                ]
+                const isFatal = fatalPatterns.some(p => lowerMsg.includes(p))
+                if (isFatal) {
+                    this.bot.logger.error(this.bot.isMobile, 'LOGIN', `账户错误: ${errorMsg}`)
+                    throw new Error(`Microsoft login error: ${errorMsg}`)
+                }
+
+                // 非致命临时提示，尝试消除弹窗并平滑等待下一轮状态检测
+                this.bot.logger.warn(
+                    this.bot.isMobile,
+                    'LOGIN',
+                    `捕获到非致命提示: ${errorMsg.slice(0, 60)}，尝试消除并继续`
+                )
+                await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
+                await this.bot.utils.wait(2000)
+                return true
+            }
+
+            case 'INTERSTITIAL_SKIP': {
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到过渡/引导提示（如无密码提示或安全信息），正在跳过')
+                const skipSelectors = [
+                    '#iShowSkip',
+                    'a#iShowSkip',
+                    '#iCancel',
+                    'button:has-text("以后再说")',
+                    'a:has-text("以后再说")',
+                    'button:has-text("暂且跳过")',
+                    'a:has-text("暂且跳过")',
+                    'button:has-text("No thanks")',
+                    'a:has-text("No thanks")',
+                    'button:has-text("Skip for now")',
+                    'a:has-text("Skip for now")',
+                    'button:has-text("取消")'
+                ]
+                for (const sel of skipSelectors) {
+                    try {
+                        const el = page.locator(sel).first()
+                        if (await el.isVisible({ timeout: 200 }).catch(() => false)) {
+                            const clicked = await this.bot.browser.utils.ghostClick(page, sel).catch(() => false)
+                            if (!clicked) {
+                                await el.click({ timeout: 2000 }).catch(() => {})
+                            }
+                            this.bot.logger.info(this.bot.isMobile, 'LOGIN', `已跳过过渡页面 | 选择器=${sel}`)
+                            break
+                        }
+                    } catch {
+                        // 继续尝试下一个
+                    }
+                }
+                await this.waitForIdle(page, 'after interstitial skip')
+                return true
             }
 
             case 'LOGGED_IN':
@@ -763,14 +905,27 @@ export class Login {
 
             // 保持登录 / KMSI 确认
             case 'KMSI_PROMPT': {
-                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '接受KMSI提示')
-                const clicked = await this.bot.browser.utils.ghostClick(page, this.selectors.primaryButton)
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '接受保持登录 (KMSI) 提示')
+                const dontShowAgain = page.locator('input#KmsiCheckboxField, input[name="DontShowAgain"]').first()
+                if (await dontShowAgain.isVisible({ timeout: 500 }).catch(() => false)) {
+                    await dontShowAgain.check().catch(() => {})
+                }
+                let clicked = await this.bot.browser.utils.ghostClick(page, this.selectors.primaryButton).catch(() => false)
                 if (!clicked) {
-                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '无法接受KMSI提示')
-                    return false
+                    const yesButton = page
+                        .locator('input#idSIButton9, button#idSIButton9, button[type="submit"], button:has-text("是"), button:has-text("Yes")')
+                        .first()
+                    if (await yesButton.isVisible({ timeout: 1000 }).catch(() => false)) {
+                        await yesButton.click().catch(() => {})
+                        clicked = true
+                    }
+                }
+                if (!clicked) {
+                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '未能明确点击KMSI按钮，尝试回车或继续')
+                    await page.keyboard.press('Enter').catch(() => {})
                 }
                 await this.waitForIdle(page, 'after KMSI acceptance')
-                this.bot.logger.info(this.bot.isMobile, 'LOGIN', 'KMSI提示已接受')
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', 'KMSI提示已处理')
                 return true
             }
 
@@ -857,11 +1012,25 @@ export class Login {
             case 'UNKNOWN': {
                 const rawUrl = page.url()
                 const url = new URL(rawUrl)
+                const hostname = url.hostname.toLowerCase()
                 this.bot.logger.warn(
                     this.bot.isMobile,
                     'LOGIN',
-                    `在 ${url.hostname}${url.pathname} 的未知状态，等待中`
+                    `在 ${url.hostname}${url.pathname} 的未知状态，尝试自动消除弹窗并等待`
                 )
+
+                // 尝试消除页面上可能阻断的任意提示弹窗
+                await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
+
+                // 检查是否已经在目标已登录页面
+                if (
+                    hostname === 'bing.com' ||
+                    hostname.endsWith('.bing.com') ||
+                    hostname === 'account.microsoft.com'
+                ) {
+                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '已处于目标已登录域名，判定为已登录')
+                    return true
+                }
 
                 if (this.bot.config.errorDiagnostics && !this.capturedUnknownUrls.has(rawUrl)) {
                     this.capturedUnknownUrls.add(rawUrl)
@@ -1020,13 +1189,11 @@ export class Login {
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
 
-            this.bot.logger.error(
+            this.bot.logger.warn(
                 this.bot.isMobile,
                 'GET-REWARD-SESSION',
-                `获取奖励上下文失败: ${message}`
+                `获取奖励上下文遇到异常，降级为Flyout/API模式继续运行: ${message}`
             )
-
-            throw new Error(`获取奖励上下文失败: ${message}`)
         }
     }
 

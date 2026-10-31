@@ -656,7 +656,7 @@ export class MicrosoftRewardsBot {
     }
 
     private async gapBetweenWorkers(): Promise<void> {
-        const delayMs = this.utils.randomDelay(60000, 240000)
+        const delayMs = this.utils.randomDelay(30000, 90000)
         this.logger.debug(this.isMobile, 'FLOW', `大任务间隔等待 | ${Math.round(delayMs / 1000)}秒`)
         await this.utils.wait(delayMs)
     }
@@ -812,11 +812,11 @@ export class MicrosoftRewardsBot {
 
                 const data: DashboardData = await this.browser.func.getDashboardData()
                 const hasBotScoreWarning =
-                    Array.isArray(data.dashboard.userWarnings) &&
+                    Array.isArray(data?.dashboard?.userWarnings) &&
                     data.dashboard.userWarnings.some(warning => warning?.name === 'Fraud_UserWarning_BotScore_UX')
 
                 if (hasBotScoreWarning) {
-                    const availablePoints = data.dashboard.userStatus.availablePoints ?? 0
+                    const availablePoints = data?.dashboard?.userStatus?.availablePoints ?? 0
 
                     if (!this.config.contintueOnBotWarning) {
                         this.logger.warn(
@@ -842,7 +842,7 @@ export class MicrosoftRewardsBot {
                     )
                 }
 
-                const profileCountry = normalizeCountry(data.dashboard.userProfile.attributes.country)
+                const profileCountry = normalizeCountry(data?.dashboard?.userProfile?.attributes?.country)
 
                 if (account.geoLocale === 'auto') {
                     if (profileCountry) {
@@ -880,8 +880,19 @@ export class MicrosoftRewardsBot {
                     }
                 }
 
-                this.userData.initialPoints = data.dashboard.userStatus.availablePoints
-                this.userData.currentPoints = data.dashboard.userStatus.availablePoints
+                const initialAllPoints = await this.browser.func.getAllAccountPoints().catch(() => null)
+                if (initialAllPoints) {
+                    this.userData.initialPoints = initialAllPoints.availablePoints
+                    this.userData.currentPoints = initialAllPoints.availablePoints
+                    this.logger.info(
+                        'main',
+                        'POINTS-ALL',
+                        `\n${this.browser.func.formatPointsSummary(initialAllPoints, accountEmail)}`
+                    )
+                } else {
+                    this.userData.initialPoints = data?.dashboard?.userStatus?.availablePoints ?? 0
+                    this.userData.currentPoints = this.userData.initialPoints
+                }
                 const initialPoints = this.userData.initialPoints ?? 0
 
                 const browserEarnable = await this.browser.func.getBrowserEarnablePoints(data)
@@ -1114,18 +1125,28 @@ export class MicrosoftRewardsBot {
                     edgeBrowsingTask = null
                 }
 
-                const finalPoints = await this.browser.func.getCurrentPoints()
-                const collectedPoints = finalPoints - initialPoints
+                const finalAllPoints = await this.browser.func.getAllAccountPoints().catch(() => null)
+                const finalPoints = finalAllPoints ? finalAllPoints.availablePoints : await this.browser.func.getCurrentPoints()
+                const collectedPoints = Math.max(0, finalPoints - initialPoints)
+
+                if (finalAllPoints) {
+                    this.logger.info(
+                        'main',
+                        'POINTS-ALL',
+                        `\n${this.browser.func.formatPointsSummary(finalAllPoints, accountEmail)}`
+                    )
+                }
 
                 this.logger.info(
                     'main',
                     'FLOW',
-                    `积分已收集 | 获得积分=${collectedPoints} | 现余额=${finalPoints} | 账户=${accountEmail}`
+                    `积分已收集 | 获得积分=${collectedPoints} | 现余额=${finalPoints} | 账户=${accountEmail}`,
+                    'green'
                 )
 
                 return {
                     initialPoints,
-                    collectedPoints: collectedPoints || 0
+                    collectedPoints
                 }
             })
         } finally {

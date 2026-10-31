@@ -3,7 +3,11 @@ services:
         # 本地构建本项目代码（V4-china 国内适配版）。
         # ghcr.io/thenetsky/... 是原作者 TheNetsky 的官方镜像，跑的是原版代码，
         # 不含本项目的国内适配（中国热搜 / PushPlus 等）。
-        build: .
+        # 使用 Dockerfile.cn：在原 Dockerfile 基础上把 apt 源换成阿里云并强制 IPv4
+        # （本机到 deb.debian.org 极慢，原 Dockerfile 会卡在 apt 下载）。
+        build:
+            context: .
+            dockerfile: Dockerfile.cn
         image: microsoft-rewards-script:china
         container_name: microsoft-rewards-script
         restart: unless-stopped

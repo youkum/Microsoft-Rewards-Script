@@ -95,26 +95,31 @@ function ensureAccount(state, email) {
     return state.accounts[email]
 }
 
-// All patterns adapted for the Chinese-localized fork of Microsoft-Rewards-Script.
-// The field names (offers=, pointsGained=, currentBalance=, etc.) remain in English
-// inside the log messages, but the surrounding text is Chinese.
+// Patterns adapted for both Chinese and English logs in Microsoft-Rewards-Script.
+// Supports both upstream English logs and Chinese-localized logs seamlessly.
 const RE = {
-    runStart: /^启动微软奖励脚本 \| v(\S+) \| 账户数: (\d+) \| 集群数: (\d+)/,
+    runStart:
+        /^(?:启动微软奖励脚本|Starting Microsoft Rewards Script) \| v(\S+) \| (?:账户数|Accounts): (\d+) \| (?:集群数|Clusters): (\d+)/i,
     accountStart:
-        /^开始处理账户: (\S+) \| geoLocale: ([^|]+?)(?: \| locale: (\S+))?(?: \| 缓存区域: (\S+))?\s*$/,
-    earnable: /^今日可赚取 \| 移动端: (\d+) \| 浏览器: (\d+) \| App: (\d+) \| (\S+) \| locale: (\S+)\s*$/,
-    searchSummary: /^搜索汇总 \| 移动端=(-?\d+) \| 桌面端=(-?\d+) \| 额外=(-?\d+) \| 总计=(-?\d+)/,
+        /^(?:开始处理账户|Starting account): (\S+) \| geoLocale: ([^|]+?)(?: \| locale: (\S+))?(?: \| (?:缓存区域|cachedRegion): (\S+))?\s*$/i,
+    earnable:
+        /^(?:今日可赚取|Earnable today) \| (?:移动端|Mobile): (\d+) \| (?:浏览器|Browser): (\d+) \| App: (\d+) \| (\S+) \| locale: (\S+)\s*$/i,
+    searchSummary:
+        /^(?:搜索汇总|Search summary) \| (?:移动端|mobile)=(-?\d+) \| (?:桌面端|desktop)=(-?\d+) \| (?:额外|bonus)=(-?\d+) \| (?:总计|total)=(-?\d+)/i,
     streakProtection:
-        /^快照完成 \| offers=(\d+) \| 可上报=(\d+) \| streaks=(\d+) \| 连续保护已启用=(true|false|null) \| 连续保护剩余天数=(\d+|null) \| 连续计数=(\d+|null) \| 等级=([^|]+) \| 账户=(\S+@\S+)$/,
+        /^(?:快照完成|Snapshot completed) \| offers=(\d+) \| (?:可上报|reportable)=(\d+) \| streaks=(\d+) \| (?:连续保护已启用|streakProtectionEnabled)=(true|false|null) \| (?:连续保护剩余天数|streakProtectionRemainingDays)=(\d+|null) \| (?:连续计数|streakCounter)=(\d+|null) \| (?:等级|level)=([^|]+) \| (?:账户|account)=(\S+@\S+)$/i,
     accountEnd:
-        /^账户完成: (\S+) \| 获得积分=(-?\d+) \| 原余额=(\d+) \| 现余额=(\d+) \| 持续秒数=([\d.]+)/,
-    runEnd: /^全部账户完成 \| 处理账户数=(\d+) \| 获得积分=(-?\d+) \| 原余额=(\d+) \| 现余额=(\d+) \| 运行分钟数=([\d.]+)/,
-    accountError: /^(\S+@\S+) \| 错误=([\s\S]+)$/,
-    flowFailed: /(\S+@\S+) 的.*流程失败:/i,
-    accountDelay: /^等待 ([\d.]+) 秒后开始下一个账户(?: \((\S+@\S+)\))?$/,
+        /^(?:账户完成|Account completed): (\S+) \| (?:获得积分|pointsGained)=(-?\d+) \| (?:原余额|originalBalance|initialPoints)=(\d+) \| (?:现余额|currentBalance|finalPoints)=(\d+) \| (?:持续秒数|durationSeconds)=([\d.]+)/i,
+    runEnd:
+        /^(?:全部账户完成|All accounts completed) \| (?:处理账户数|accountsProcessed)=(\d+) \| (?:获得积分|pointsGained)=(-?\d+) \| (?:原余额|originalBalance|initialPoints)=(\d+) \| (?:现余额|currentBalance|finalPoints)=(\d+) \| (?:运行分钟数|runtimeMinutes)=([\d.]+)/i,
+    accountError: /^(\S+@\S+) \| (?:错误|error)=([\s\S]+)$/i,
+    flowFailed: /(?:(\S+@\S+) 的.*流程失败:|^(\S+@\S+) flow failed:)/i,
+    accountDelay:
+        /^(?:等待|Waiting) ([\d.]+) (?:秒后开始下一个账户|seconds before next account)(?: \((\S+@\S+)\))?/i,
 
-    searchStart: /^开始必应搜索 \| 当前余额=(\d+)/,
-    flowCollected: /^积分已收集 \| 获得积分=(-?\d+) \| 现余额=(\d+) \| 账户=(\S+@\S+)/
+    searchStart: /^(?:开始必应搜索|Starting Bing search) \| (?:当前余额|currentBalance)=(\d+)/i,
+    flowCollected:
+        /^(?:积分已收集(?:完毕)?|Points collected) \| (?:获得积分|本次净获得|pointsGained)=[+]?(-?\d+) \| (?:现余额|currentBalance)=(\d+) \| (?:账户|account)=(\S+@\S+)/i
 }
 
 function numericField(message, name) {
@@ -138,38 +143,62 @@ function accountEmailForEntry(state, entry) {
 function pointEventSource(title, message) {
     switch (title) {
         case 'SEARCH-BING':
-            return message.startsWith('必应搜索完成') ? 'search' : null
+            return (message.startsWith('必应搜索完成') || message.includes('pointsGained=')) ? 'search' : null
         case 'SEARCH-BONUS':
-            return message.startsWith('必应搜索完成') ? 'bonus' : null
+            return (message.startsWith('必应搜索完成') || message.includes('pointsGained=')) ? 'bonus' : null
         case 'READ-TO-EARN':
             return (message.startsWith('文章后的积分变化') ||
                     message.startsWith('未获得积分，停止读文赚积分') ||
                     message.startsWith('已阅读第') ||
-                    message.startsWith('读文赚积分完成')) ? 'read' : null
+                    message.startsWith('读文赚积分完成') ||
+                    message.startsWith('Read article') ||
+                    message.startsWith('Read to earn complete') ||
+                    message.includes('pointsGained=')) ? 'read' : null
         case 'DAILY-CHECK-IN':
-            return message.startsWith('每日签到完成') ? 'checkIn' : null
+            return (message.startsWith('每日签到完成') ||
+                    message.startsWith('Completed Daily Check-In') ||
+                    message.includes('pointsGained=')) ? 'checkIn' : null
         case 'CLAIM-BONUS-POINTS':
-            return (message.startsWith('领取奖励积分完成') || message.startsWith('没有可领取的积分'))
+            return (message.startsWith('领取奖励积分完成') ||
+                    message.startsWith('没有可领取的积分') ||
+                    message.startsWith('Completed ClaimBonusPoints') ||
+                    message.includes('pointsGained='))
                 ? 'claimBonus'
                 : null
         case 'CLAIM-REWARD':
-            return message.startsWith('奖励已领取') ? 'claimReward' : null
+            return (message.startsWith('奖励已领取') ||
+                    message.startsWith('Reward claimed') ||
+                    message.includes('pointsGained=')) ? 'claimReward' : null
         case 'URL-REWARD':
-            return (message.startsWith('UrlReward 完成') || message.startsWith('UrlReward 未获得积分'))
+            return (message.startsWith('UrlReward 完成') ||
+                    message.startsWith('UrlReward 未获得积分') ||
+                    message.startsWith('Completed UrlReward') ||
+                    message.includes('pointsGained='))
                 ? 'urlReward'
                 : null
         case 'VISUAL-SEARCH':
-            return (message.startsWith('每日视觉搜索完成') || message.startsWith('每日视觉搜索已记录'))
+            return (message.startsWith('每日视觉搜索完成') ||
+                    message.startsWith('每日视觉搜索已记录') ||
+                    message.startsWith('Daily visual search done') ||
+                    message.includes('pointsGained='))
                 ? 'visualSearch'
                 : null
         case 'APP-REWARD':
-            return (message.startsWith('AppReward 完成') || message.startsWith('AppReward 完成但未获得积分'))
+            return (message.startsWith('AppReward 完成') ||
+                    message.startsWith('AppReward 完成但未获得积分') ||
+                    message.startsWith('Completed AppReward') ||
+                    message.includes('pointsGained='))
                 ? 'appReward'
                 : null
         case 'PUNCHCARD':
-            return (message.includes('COMPLETE') || message.includes('in progress')) ? 'punchcard' : null
+            return (message.includes('COMPLETE') ||
+                    message.includes('in progress') ||
+                    message.includes('Reported child') ||
+                    message.includes('pointsGained=')) ? 'punchcard' : null
         case 'SEARCH-ON-BING-SEARCH':
-            return message.startsWith('SearchOnBing 活动完成') ? 'searchOnBing' : null
+            return (message.startsWith('SearchOnBing 活动完成') ||
+                    message.startsWith('SearchOnBing activity completed') ||
+                    message.includes('pointsGained=')) ? 'searchOnBing' : null
         default:
             return null
     }
@@ -244,7 +273,7 @@ function applyEdgeBrowsing(state, entry) {
     if (!account) return null
 
     const message = entry.message ?? ''
-    const finalReports = message.startsWith('后台 Edge 浏览活动结束')
+    const finalReports = (message.startsWith('后台 Edge 浏览活动结束') || message.startsWith('Finished background Edge browsing activity'))
         ? numericField(message, 'reports')
         : null
     const progress =
@@ -269,7 +298,7 @@ function applyEdgeBrowsing(state, entry) {
         updatedAt: null
     }
 
-    if (message.startsWith('开始后台 Edge 浏览活动')) {
+    if (message.startsWith('开始后台 Edge 浏览活动') || message.startsWith('Started background Edge browsing activity')) {
         previous.status = 'running'
         previous.targetMinutes = numericField(message, 'targetMinutes')
         previous.serverIntervalMinutes = numericField(message, 'serverIntervalMinutes')
@@ -278,12 +307,12 @@ function applyEdgeBrowsing(state, entry) {
         previous.scheduledMinutesCovered = 0
         previous.estimatedRemainingMinutes = numericField(message, 'estimatedDurationMinutes')
         previous.waitingForBackground = false
-    } else if (message.startsWith('Edge 浏览进度')) {
+    } else if (message.startsWith('Edge 浏览进度') || message.startsWith('Edge browsing progress')) {
         previous.status = 'running'
-    } else if (message.startsWith('已提交 Edge 浏览报告')) {
+    } else if (message.startsWith('已提交 Edge 浏览报告') || message.startsWith('Submitted Edge browsing report')) {
         previous.status = 'running'
         previous.nextReportInSeconds = null
-    } else if (message.startsWith('后台 Edge 浏览活动结束')) {
+    } else if (message.startsWith('后台 Edge 浏览活动结束') || message.startsWith('Finished background Edge browsing activity')) {
         const duplicates = numericField(message, 'duplicates') ?? previous.duplicates
         const failed = numericField(message, 'failed') ?? previous.failed
         const serverCompleteMatch = message.match(/(?:^| \| )serverComplete=(true|false)(?= \| |$)/)
@@ -297,7 +326,7 @@ function applyEdgeBrowsing(state, entry) {
         previous.nextReportInSeconds = null
         previous.estimatedRemainingMinutes = 0
         previous.waitingForBackground = false
-    } else if (message === 'Edge 浏览连击（Browsing Streak）已完成') {
+    } else if (message === 'Edge 浏览连击（Browsing Streak）已完成' || message === 'Edge browsing streak completed') {
         previous.status = 'complete'
         previous.reportsRemaining = 0
         previous.nextReportInSeconds = null
@@ -305,20 +334,24 @@ function applyEdgeBrowsing(state, entry) {
         previous.waitingForBackground = false
     } else if (
         message === '该账户无法使用 Edge 浏览连击（Browsing Streak）' ||
-        message.startsWith('跳过：')
+        message === 'Account is not eligible for Edge browsing streak' ||
+        message.startsWith('跳过：') ||
+        message.startsWith('Skipping:')
     ) {
         previous.status = 'skipped'
         previous.waitingForBackground = false
     } else if (
         message.startsWith('后台 Edge 浏览活动失败') ||
-        message.startsWith('意外的后台任务失败')
+        message.startsWith('意外的后台任务失败') ||
+        message.startsWith('Background Edge browsing activity failed') ||
+        message.startsWith('Unexpected background task failure')
     ) {
         previous.status = 'failed'
         previous.waitingForBackground = false
-    } else if (message === '后台活动已取消') {
+    } else if (message === '后台活动已取消' || message === 'Background activity cancelled') {
         previous.status = 'cancelled'
         previous.waitingForBackground = false
-    } else if (message.startsWith('前台活动已完成；')) {
+    } else if (message.startsWith('前台活动已完成；') || message.startsWith('Foreground activities finished;')) {
         previous.waitingForBackground = true
     } else {
         return null
@@ -364,7 +397,7 @@ export function applyLogToRunState(state, entry) {
 
         const ff = msg.match(RE.flowFailed)
         if (ff) {
-            const acc = ensureAccount(state, ff[1])
+            const acc = ensureAccount(state, ff[1] || ff[2])
             if (acc) {
                 acc.error = msg
                 acc.success = acc.success === true ? true : false

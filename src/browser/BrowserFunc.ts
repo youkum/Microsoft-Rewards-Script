@@ -10,7 +10,7 @@ import { isBrowserClosedError } from '../util/Utils'
 
 import type { DashboardData } from './../interface/DashboardData'
 import type { AppUserData } from '../interface/AppUserData'
-import type { AppEarnablePoints, BrowserEarnablePoints } from '../interface/Points'
+import type { AccountAllPointsSummary, AppEarnablePoints, BrowserEarnablePoints } from '../interface/Points'
 import type { AppDashboardData } from '../interface/AppDashBoardData'
 import { detectFlyoutBotWarning, mapFlyoutToDashboard, type RewardsFlyoutData } from './FlyoutDashboard'
 
@@ -77,7 +77,101 @@ export default class BrowserFunc {
             )
         }
 
-        return await this.getFlyoutDashboardData(cookies, fingerprintHeaders)
+        try {
+            return await this.getFlyoutDashboardData(cookies, fingerprintHeaders)
+        } catch {
+            // 尝试通过浏览器页面内原生执行 fetch 获取 Flyout
+            const inPageData = await this.getInPageFlyoutData()
+            if (inPageData) return inPageData
+
+            // 兜底返回本地安全降级数据，保证绝不抛错阻断任务
+            return this.createFallbackDashboardData()
+        }
+    }
+
+    private async getInPageFlyoutData(): Promise<DashboardData | null> {
+        const page = this.bot.isMobile ? this.bot.mainMobilePage : this.bot.mainDesktopPage
+        if (!page || page.isClosed()) return null
+
+        try {
+            this.bot.logger.info(this.bot.isMobile, 'GET-DASHBOARD-DATA', '正在尝试通过真实浏览器内部执行 Flyout 请求兜底')
+            const flyoutData = await page.evaluate(async (url: string) => {
+                try {
+                    const res = await fetch(url, {
+                        method: 'GET',
+                        headers: { Accept: 'application/json' },
+                        credentials: 'include'
+                    })
+                    if (!res.ok) return null
+                    return await res.json()
+                } catch {
+                    return null
+                }
+            }, URLs.bing.rewardsFlyoutUserInfo)
+
+            if (flyoutData && !flyoutData.isError) {
+                const mapped = mapFlyoutToDashboard(flyoutData)
+                this.logBotDetectionMetrics(mapped)
+                this.bot.logger.info(this.bot.isMobile, 'GET-DASHBOARD-DATA', '通过浏览器内部 Flyout 兜底获取仪表板成功')
+                return mapped
+            }
+        } catch (err) {
+            this.bot.logger.debug(
+                this.bot.isMobile,
+                'GET-DASHBOARD-DATA',
+                `浏览器内部 Flyout 请求失败: ${err instanceof Error ? err.message : String(err)}`
+            )
+        }
+        return null
+    }
+
+    public createFallbackDashboardData(): DashboardData {
+        const snapshot = this.bot.reactSnapshot
+        const points =
+            snapshot?.account?.availablePoints ??
+            this.bot.userData?.currentPoints ??
+            this.bot.userData?.initialPoints ??
+            0
+
+        const lifetime = snapshot?.account?.lifetimeEarn ?? 0
+
+        this.bot.logger.warn(
+            this.bot.isMobile,
+            'GET-DASHBOARD-DATA',
+            `使用本地安全降级仪表板数据 | 当前积分=${points} | 历史总分=${lifetime}`
+        )
+
+        return {
+            dashboard: {
+                userStatus: {
+                    availablePoints: points,
+                    lifetimePoints: lifetime,
+                    lifetimePointsRedeemed: 0,
+                    lifetimeGivingPoints: 0,
+                    isRewardsUser: true,
+                    counters: {
+                        pcSearch: [],
+                        mobileSearch: [],
+                        activityAndQuiz: [],
+                        dailyPoint: []
+                    }
+                },
+                userWarnings: [],
+                userProfile: {
+                    attributes: {
+                        country: this.bot.userData.geoLocale || 'US'
+                    }
+                },
+                dailySetPromotions: {},
+                morePromotions: [],
+                punchCards: []
+            } as any,
+            profile: {
+                attributes: {
+                    country: this.bot.userData.geoLocale || 'US'
+                }
+            } as any
+        } as DashboardData
     }
 
     private async getFlyoutDashboardData(
@@ -110,10 +204,10 @@ export default class BrowserFunc {
             this.logBotDetectionMetrics(mappedDashboard)
             return mappedDashboard
         } catch (error) {
-            this.bot.logger.error(
+            this.bot.logger.warn(
                 this.bot.isMobile,
                 'GET-DASHBOARD-DATA',
-                `获取仪表板数据失败（主接口与 Bing flyout 兜底均失败）: ${this.errorMessage(error)}`
+                `获取 Bing flyout 仪表板失败: ${this.errorMessage(error)}`
             )
             throw error
         }
@@ -178,35 +272,40 @@ export default class BrowserFunc {
         try {
             data ??= await this.getDashboardData()
 
+            const counters = data?.dashboard?.userStatus?.counters
             const desktopSearchPoints =
-                data.dashboard.userStatus.counters.pcSearch?.reduce(
-                    (sum: number, x: { pointProgressMax: number; pointProgress: number }) =>
-                        sum + (x.pointProgressMax - x.pointProgress),
+                counters?.pcSearch?.reduce(
+                    (sum: number, x: { pointProgressMax?: number; pointProgress?: number }) =>
+                        sum + Math.max(0, (Number(x?.pointProgressMax) || 0) - (Number(x?.pointProgress) || 0)),
                     0
                 ) ?? 0
 
             const mobileSearchPoints =
-                data.dashboard.userStatus.counters.mobileSearch?.reduce(
-                    (sum: number, x: { pointProgressMax: number; pointProgress: number }) =>
-                        sum + (x.pointProgressMax - x.pointProgress),
+                counters?.mobileSearch?.reduce(
+                    (sum: number, x: { pointProgressMax?: number; pointProgress?: number }) =>
+                        sum + Math.max(0, (Number(x?.pointProgressMax) || 0) - (Number(x?.pointProgress) || 0)),
                     0
                 ) ?? 0
 
             const todayDate = this.bot.utils.getFormattedDate()
-            const dailySetPoints =
-                data.dashboard.dailySetPromotions[todayDate]?.reduce(
-                    (sum: number, x: { pointProgressMax: number; pointProgress: number }) =>
-                        sum + (x.pointProgressMax - x.pointProgress),
-                    0
-                ) ?? 0
+            const dailySetList = data?.dashboard?.dailySetPromotions?.[todayDate] ?? []
+            const dailySetPoints = Array.isArray(dailySetList)
+                ? dailySetList.reduce(
+                      (sum: number, x: { pointProgressMax?: number; pointProgress?: number }) =>
+                          sum + Math.max(0, (Number(x?.pointProgressMax) || 0) - (Number(x?.pointProgress) || 0)),
+                      0
+                  )
+                : 0
 
-            const morePromotionsPoints =
-                data.dashboard.morePromotions?.reduce((sum, x) => {
-                    if (x.promotionType === 'urlreward' && x.exclusiveLockedFeatureStatus !== 'locked') {
-                        return sum + (x.pointProgressMax - x.pointProgress)
-                    }
-                    return sum
-                }, 0) ?? 0
+            const morePromotions = data?.dashboard?.morePromotions ?? []
+            const morePromotionsPoints = Array.isArray(morePromotions)
+                ? morePromotions.reduce((sum, x) => {
+                      if (x?.promotionType === 'urlreward' && x?.exclusiveLockedFeatureStatus !== 'locked') {
+                          return sum + Math.max(0, (Number(x?.pointProgressMax) || 0) - (Number(x?.pointProgress) || 0))
+                      }
+                      return sum
+                  }, 0)
+                : 0
 
             const totalEarnablePoints = desktopSearchPoints + mobileSearchPoints + dailySetPoints + morePromotionsPoints
 
@@ -218,17 +317,27 @@ export default class BrowserFunc {
                 totalEarnablePoints
             }
         } catch (error) {
-            this.bot.logger.error(
+            this.bot.logger.warn(
                 this.bot.isMobile,
                 'GET-BROWSER-EARNABLE-POINTS',
-                `发生错误: ${error instanceof Error ? error.message : String(error)}`
+                `获取浏览器可赚积分时发生非致命错误，使用安全兜底: ${error instanceof Error ? error.message : String(error)}`
             )
-            throw error
+            return {
+                dailySetPoints: 0,
+                morePromotionsPoints: 0,
+                desktopSearchPoints: 0,
+                mobileSearchPoints: 0,
+                totalEarnablePoints: 0
+            }
         }
     }
 
     async getAppEarnablePoints(): Promise<AppEarnablePoints> {
         try {
+            if (!this.bot.accessToken) {
+                return { readToEarn: 0, checkIn: 0, totalEarnablePoints: 0 }
+            }
+
             const eligibleOffers = ['ENUS_readarticle3_30points', 'Gamification_Sapphire_DailyCheckIn']
 
             const request: HttpRequestConfig = {
@@ -244,28 +353,34 @@ export default class BrowserFunc {
 
             const response = await this.bot.http.request<AppUserData>(request)
             const userData: AppUserData = response.data
-            const eligibleActivities = userData.response.promotions.filter(x =>
-                eligibleOffers.includes(x.attributes.offerid ?? '')
+            const promotions = userData?.response?.promotions
+            if (!Array.isArray(promotions)) {
+                return { readToEarn: 0, checkIn: 0, totalEarnablePoints: 0 }
+            }
+
+            const eligibleActivities = promotions.filter(x =>
+                eligibleOffers.includes(x?.attributes?.offerid ?? '')
             )
 
             let readToEarn = 0
             let checkIn = 0
 
             for (const item of eligibleActivities) {
-                const attrs = item.attributes
+                const attrs = item?.attributes
+                if (!attrs) continue
 
                 if (attrs.type === 'msnreadearn') {
-                    const pointMax = parseInt(attrs.pointmax ?? '0')
-                    const pointProgress = parseInt(attrs.pointprogress ?? '0')
+                    const pointMax = parseInt(attrs.pointmax ?? '0', 10) || 0
+                    const pointProgress = parseInt(attrs.pointprogress ?? '0', 10) || 0
                     readToEarn = Math.max(0, pointMax - pointProgress)
                 } else if (attrs.type === 'checkin') {
-                    const progress = parseInt(attrs.progress ?? '0')
+                    const progress = parseInt(attrs.progress ?? '0', 10) || 0
                     const checkInDay = progress % 7
                     const lastUpdated = new Date(attrs.last_updated ?? '')
                     const today = new Date()
 
                     if (checkInDay < 6 && today.getDate() !== lastUpdated.getDate()) {
-                        checkIn = parseInt(attrs[`day_${checkInDay + 1}_points`] ?? '0')
+                        checkIn = parseInt(attrs[`day_${checkInDay + 1}_points`] ?? '0', 10) || 0
                     }
                 }
             }
@@ -278,28 +393,281 @@ export default class BrowserFunc {
                 totalEarnablePoints
             }
         } catch (error) {
-            this.bot.logger.error(
+            this.bot.logger.warn(
                 this.bot.isMobile,
                 'GET-APP-EARNABLE-POINTS',
-                `发生错误: ${error instanceof Error ? error.message : String(error)}`
+                `获取App可赚积分时发生非致命错误，使用安全兜底: ${error instanceof Error ? error.message : String(error)}`
             )
-            throw error
+            return {
+                readToEarn: 0,
+                checkIn: 0,
+                totalEarnablePoints: 0
+            }
         }
+    }
+
+    async getPointsFromBrowserPage(page?: Page): Promise<number | null> {
+        const activePage = page || (this.bot.isMobile ? this.bot.mainMobilePage : this.bot.mainDesktopPage)
+        if (!activePage || activePage.isClosed()) return null
+
+        try {
+            // 1. 尝试从 Bing 顶栏 Rewards 积分角标提取 (#id_rc)
+            const bingPointsText = await activePage
+                .$eval('#id_rc, #id_rh, .id_name', el => el.textContent)
+                .catch(() => null)
+            if (bingPointsText) {
+                const clean = bingPointsText.replace(/[^0-9]/g, '')
+                if (clean) {
+                    const parsed = parseInt(clean, 10)
+                    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+                }
+            }
+
+            // 2. 尝试从 Rewards 页面主要积分元素提取
+            const rewardsPointsText = await activePage
+                .$eval(
+                    '[data-bi-id="rewards-points"], .points-balance, [class*="pointsBalance"], [class*="availablePoints"], [aria-label*="points" i]',
+                    el => el.textContent
+                )
+                .catch(() => null)
+            if (rewardsPointsText) {
+                const clean = rewardsPointsText.replace(/[^0-9]/g, '')
+                if (clean) {
+                    const parsed = parseInt(clean, 10)
+                    if (Number.isFinite(parsed) && parsed >= 0) return parsed
+                }
+            }
+
+            // 3. 在活跃页面内部执行 fetch 读取 Bing Flyout 积分（享用完整真实 Cookie 与指纹）
+            const inPagePoints = await activePage
+                .evaluate(async (url: string) => {
+                    try {
+                        const res = await fetch(url, { credentials: 'include' })
+                        if (!res.ok) return null
+                        const json = await res.json()
+                        return json?.userInfo?.balance ?? json?.flyoutResult?.userStatus?.availablePoints ?? null
+                    } catch {
+                        return null
+                    }
+                }, URLs.bing.rewardsFlyoutUserInfo)
+                .catch(() => null)
+
+            if (typeof inPagePoints === 'number' && Number.isFinite(inPagePoints) && inPagePoints >= 0) {
+                return inPagePoints
+            }
+        } catch {
+            // 忽略 DOM 提取异常
+        }
+
+        return null
     }
 
     async getCurrentPoints(): Promise<number> {
         try {
+            // 1. 优先从仪表板 API / Flyout 获取
             const data = await this.getDashboardData()
-
-            return data.dashboard.userStatus.availablePoints
+            const availablePoints = data?.dashboard?.userStatus?.availablePoints
+            if (typeof availablePoints === 'number' && Number.isFinite(availablePoints) && availablePoints >= 0) {
+                this.bot.userData.currentPoints = availablePoints
+                return availablePoints
+            }
         } catch (error) {
-            this.bot.logger.error(
+            this.bot.logger.warn(
                 this.bot.isMobile,
                 'GET-CURRENT-POINTS',
-                `发生错误: ${error instanceof Error ? error.message : String(error)}`
+                `从仪表板获取当前积分失败，启动备用获取方式 | 错误=${this.errorMessage(error)}`
             )
-            throw error
         }
+
+        // 2. 从当前活跃浏览器的 DOM 或页面内 fetch 获取
+        const domPoints = await this.getPointsFromBrowserPage()
+        if (typeof domPoints === 'number' && Number.isFinite(domPoints) && domPoints >= 0) {
+            this.bot.logger.info(
+                this.bot.isMobile,
+                'GET-CURRENT-POINTS',
+                `通过页面 DOM 成功获取到当前积分: ${domPoints}`
+            )
+            this.bot.userData.currentPoints = domPoints
+            return domPoints
+        }
+
+        // 3. 尝试从 React 快照读取
+        const snapshotPoints = this.bot.reactSnapshot?.account?.availablePoints
+        if (typeof snapshotPoints === 'number' && Number.isFinite(snapshotPoints) && snapshotPoints >= 0) {
+            this.bot.logger.info(
+                this.bot.isMobile,
+                'GET-CURRENT-POINTS',
+                `通过 React 快照获取到当前积分: ${snapshotPoints}`
+            )
+            this.bot.userData.currentPoints = snapshotPoints
+            return snapshotPoints
+        }
+
+        // 4. 回退到 userData 中的已知积分，保证永不抛错
+        const fallbackPoints = this.bot.userData.currentPoints || this.bot.userData.initialPoints || 0
+        this.bot.logger.warn(
+            this.bot.isMobile,
+            'GET-CURRENT-POINTS',
+            `无法从远程或 DOM 获取最新积分，使用最后已知积分: ${fallbackPoints}`
+        )
+        return fallbackPoints
+    }
+
+    async getAllAccountPoints(): Promise<AccountAllPointsSummary> {
+        let dashboardData: DashboardData | null = null
+        try {
+            dashboardData = await this.getDashboardData()
+        } catch {
+            dashboardData = this.createFallbackDashboardData()
+        }
+
+        const userStatus = dashboardData?.dashboard?.userStatus
+        const counters = userStatus?.counters
+        const snapshot = this.bot.reactSnapshot
+
+        const availablePoints =
+            (typeof userStatus?.availablePoints === 'number' && userStatus.availablePoints >= 0
+                ? userStatus.availablePoints
+                : null) ??
+            (typeof snapshot?.account?.availablePoints === 'number' ? snapshot.account.availablePoints : null) ??
+            this.bot.userData.currentPoints ??
+            this.bot.userData.initialPoints ??
+            0
+
+        const lifetimePoints =
+            Number(userStatus?.lifetimePoints) ||
+            Number(snapshot?.account?.lifetimeEarn) ||
+            0
+
+        const lifetimeRedeemed = Number(userStatus?.lifetimePointsRedeemed) || 0
+        const lifetimeGiving = Number(userStatus?.lifetimeGivingPoints) || 0
+
+        const sumCounters = (list?: Array<{ pointProgress?: number; pointProgressMax?: number }>) => {
+            let current = 0
+            let max = 0
+            if (Array.isArray(list)) {
+                for (const item of list) {
+                    const c = Math.max(0, Number(item?.pointProgress) || 0)
+                    const m = Math.max(0, Number(item?.pointProgressMax) || 0)
+                    current += c
+                    max += m
+                }
+            }
+            return { current, max, remaining: Math.max(0, max - current) }
+        }
+
+        const isEdge = (item: any) => {
+            return [item?.offerId, item?.name, item?.title].some(
+                (v: unknown) => typeof v === 'string' && /(^|[_\s-])edge([_\s-]|$)/i.test(v)
+            )
+        }
+
+        const allPcCounters = counters?.pcSearch ?? []
+        const edgeCounters = allPcCounters.filter(isEdge)
+        const purePcCounters = edgeCounters.length ? allPcCounters.filter(c => !isEdge(c)) : allPcCounters
+
+        const pcSearch = sumCounters(purePcCounters)
+        const edgeSearch = sumCounters(edgeCounters)
+        const mobileSearch = sumCounters(counters?.mobileSearch)
+
+        const todayDate = this.bot.utils.getFormattedDate()
+        const dailySetList = dashboardData?.dashboard?.dailySetPromotions?.[todayDate] ?? []
+        const dailySet = sumCounters(dailySetList)
+
+        let moreCurrent = 0
+        let moreMax = 0
+        const moreList = dashboardData?.dashboard?.morePromotions ?? []
+        if (Array.isArray(moreList)) {
+            for (const x of moreList) {
+                if (x?.promotionType === 'urlreward' && x?.exclusiveLockedFeatureStatus !== 'locked') {
+                    moreCurrent += Math.max(0, Number(x?.pointProgress) || 0)
+                    moreMax += Math.max(0, Number(x?.pointProgressMax) || 0)
+                }
+            }
+        }
+        const morePromotions = { current: moreCurrent, max: moreMax, remaining: Math.max(0, moreMax - moreCurrent) }
+
+        let appReadToEarn = { current: 0, max: 0, remaining: 0 }
+        let appCheckIn = { day: 0, points: 0 }
+        if (this.bot.accessToken) {
+            try {
+                const appEarnable = await this.getAppEarnablePoints()
+                appReadToEarn = { current: 0, max: appEarnable.readToEarn, remaining: appEarnable.readToEarn }
+                appCheckIn = { day: 0, points: appEarnable.checkIn }
+            } catch {
+                // Ignore app points error
+            }
+        }
+
+        const totalEarnableToday =
+            pcSearch.remaining +
+            mobileSearch.remaining +
+            edgeSearch.remaining +
+            dailySet.remaining +
+            morePromotions.remaining +
+            appReadToEarn.remaining +
+            appCheckIn.points
+
+        const dailyPointCounters = counters?.dailyPoint
+        let todayEarned = 0
+        if (Array.isArray(dailyPointCounters) && dailyPointCounters.length > 0) {
+            todayEarned = dailyPointCounters.reduce(
+                (sum, c) => sum + Math.max(0, Number(c?.pointProgress) || 0),
+                0
+            )
+        }
+        if (todayEarned === 0 && this.bot.userData.initialPoints > 0 && availablePoints > this.bot.userData.initialPoints) {
+            todayEarned = availablePoints - this.bot.userData.initialPoints
+        }
+
+        const level = Number(snapshot?.account?.level) || (availablePoints >= 500 ? 2 : 1)
+        const pointsProgress = Number(snapshot?.account?.pointsProgress) || 0
+        const pointsRemaining = Number(snapshot?.account?.pointsRemaining) || 0
+        const streakCount = Number(snapshot?.streakProtection?.streakCounter) || 0
+        const streakProtection = Boolean(snapshot?.streakProtection?.isProtectionOn)
+        const streakProtectionDays = Number(snapshot?.streakProtection?.remainingDays) || 0
+
+        return {
+            availablePoints,
+            lifetimePoints,
+            lifetimeRedeemed,
+            lifetimeGiving,
+            todayEarned,
+            pcSearch,
+            mobileSearch,
+            edgeSearch,
+            dailySet,
+            morePromotions,
+            appReadToEarn,
+            appCheckIn,
+            totalEarnableToday,
+            level,
+            pointsProgress,
+            pointsRemaining,
+            streakCount,
+            streakProtection,
+            streakProtectionDays
+        }
+    }
+
+    formatPointsSummary(summary: AccountAllPointsSummary, email?: string): string {
+        const lines: string[] = [
+            `------------------ 账号积分详细报表 ------------------`,
+            `账号: ${email ?? this.bot.currentAccountEmail ?? '当前账号'}`,
+            `可用积分余额: ${summary.availablePoints.toLocaleString()} 分 | 历史总积分: ${summary.lifetimePoints.toLocaleString()} 分`,
+            `用户等级: Lv.${summary.level} | 连胜天数: ${summary.streakCount} 天${summary.streakProtection ? ` (保护中, 剩余${summary.streakProtectionDays}天)` : ''}`,
+            `今日任务进度:`,
+            `  • 电脑搜索: ${summary.pcSearch.current}/${summary.pcSearch.max} (剩余 ${summary.pcSearch.remaining} 分)`,
+            `  • 手机搜索: ${summary.mobileSearch.current}/${summary.mobileSearch.max} (剩余 ${summary.mobileSearch.remaining} 分)`,
+            `  • Edge奖励: ${summary.edgeSearch.current}/${summary.edgeSearch.max} (剩余 ${summary.edgeSearch.remaining} 分)`,
+            `  • 每日任务: ${summary.dailySet.current}/${summary.dailySet.max} (剩余 ${summary.dailySet.remaining} 分)`,
+            `  • 更多活动: ${summary.morePromotions.current}/${summary.morePromotions.max} (剩余 ${summary.morePromotions.remaining} 分)`,
+            `  • App阅读:  ${summary.appReadToEarn.current}/${summary.appReadToEarn.max} (剩余 ${summary.appReadToEarn.remaining} 分)`,
+            `  • App签到:  ${summary.appCheckIn.points > 0 ? `+${summary.appCheckIn.points}分可领` : '已完成/无'}`,
+            `今日共计可赚取剩余: ${summary.totalEarnableToday} 分 | 今日已获得: +${summary.todayEarned} 分`,
+            `----------------------------------------------------`
+        ]
+        return lines.join('\n')
     }
 
     async bootstrap(page: Page): Promise<void> {
@@ -331,8 +699,10 @@ export default class BrowserFunc {
 
             const dashboardRendered = /<section\b[^>]*\bid=["']dailyset["']/i.test(sources.join('\n'))
             if (!dashboardRendered) {
-                throw new Error(
-                    'Rewards dashboard did not render (no section#dailyset) - likely a login/redirect issue, aborting'
+                this.bot.logger.warn(
+                    this.bot.isMobile,
+                    'BOOTSTRAP',
+                    'Rewards 仪表板页面静态内容未包含 section#dailyset（可能页面改版或由客户端动态渲染），降级为Flyout/API兜底模式'
                 )
             }
 

@@ -1,0 +1,74 @@
+# Microsoft Rewards Script - Vibe Coding / AI Assistant Rules
+
+## 项目概述
+本项目是基于 TypeScript + Patchright (Playwright 反反爬版) 的微软 Rewards 自动化与智能任务脚本（国内深度优化与 WebUI 协同版）。
+支持桌面端/移动端搜索、每日打卡、阅读赚积分、连击保护、微信推送通知，并配备了基于 Server-Sent Events (SSE) 的 WebUI 仪表盘系统。
+
+## 技术栈与关键依赖
+- **运行时环境**: Node.js >= 24.0.0
+- **开发语言**: TypeScript 5.x / 6.x
+- **浏览器驱动**: Patchright (`patchright`, Playwright 无头反检测替代品)
+- **风控防护**: `fingerprint-generator`, `fingerprint-injector`, `ghost-cursor-playwright-port`
+- **双因子认证**: `otpauth` (RFC 6238 TOTP)
+- **架构部署**: Docker & Docker Compose (阿里云/国内加速源优化版 Dockerfile.cn)
+- **Web 控制台**: 依赖 `scripts/api/` (Control API :3010) 与 `rewards-dashboard` (:8890)
+
+---
+
+## 核心代码架构映射
+
+### 1. 核心流程与入口 (`src/index.ts`)
+- `MicrosoftRewardsBot`: 主控制类，管理任务生命周期、集群调度 (`cluster`)、各账户串行/并发执行。
+- 账户运行流程:
+  1. 读取配置与代理初始化 (`HttpClient`)
+  2. 启动桌面端/移动端浏览器会话 (`getRewardsSession`)
+  3. 执行初始积分快照 (`getAllAccountPoints()`)
+  4. 按开关依次执行日常任务（搜索、打卡、每日任务、阅读等）
+  5. 执行最终积分结算与统计汇总
+  6. 触发各渠道通知 (PushPlus / ClawBot / Server酱 / Webhook)
+
+### 2. 智能登录系统 (`src/browser/auth/`)
+- `Login.ts`: 状态机驱动的微软统一认证中心，具备自动跳过微软拦截页 (`INTERSTITIAL_SKIP`)、Cookie 隐私弹窗消除、安全错误辨识等能力。
+- `methods/EmailLogin.ts`: 现代与经典 Microsoft 登录选择器多层回退机制，具备键盘回车及表单提交多重兜底。
+- `methods/Totp2FALogin.ts`: 自动识别 TOTP 2FA 并生成填入动态验证码。
+
+### 3. 全量积分与 6 重降级保障 (`src/browser/BrowserFunc.ts`)
+- `getAllAccountPoints()`: 返回完整的账户积分画像 (`AccountAllPointsSummary`)，包括：
+  - 可用积分 (`availablePoints`)
+  - 历史总积分 (`lifetimePoints`)
+  - 历史已兑换 (`lifetimeRedeemed`)
+  - 今日已获得 (`todayEarned`)
+  - 今日各子项配额与完成度 (`pcSearch`, `mobileSearch`, `edgeSearch`, `dailySet`, `morePromotions`, `appReadToEarn`, `appCheckIn`)
+  - 账户等级、升级进度、连击天数与保护状态 (`streakProtection`)
+- **6 级降级机制**:
+  1. `Primary Rewards API`
+  2. `Flyout HTTP Endpoint`
+  3. 页面内部真实上下文 `in-page fetch`
+  4. DOM 元素提取 (`#id_rc`, `[data-bi-id="rewards-points"]`)
+  5. React Flight 快照解析
+  6. 本地兜底安全状态（保证永远不抛未捕获异常中断主流程）
+
+### 4. WebUI 控制台协同 (`scripts/api/`)
+- `server.js`: 无依赖轻量级 Node.js HTTP API 服务（端口 3010），向外暴露 `/status`, `/points`, `/logs`, `/events` (SSE), `/start`, `/stop`。
+- `processManager.js`: 子进程管理器，实时接管 stdout/stderr 流。
+- `logParser.js`: **核心日志正则解析器**。解析控制台输出并驱动前端仪表盘实时积分显示。
+
+---
+
+## ⚠️ 关键开发约束与注意事项（AI 必须严格遵守）
+
+1. **绝对不要破坏 stdout 日志格式！**
+   - WebUI 仪表盘和 `scripts/api/logParser.js` 依赖严格的日志正则匹配（例如 `FLOW: 积分已收集 | 获得积分=... | 现余额=... | 账户=...`）。
+   - 如果修改了 `src/index.ts` 中的关键进度日志，必须同步更新 `scripts/api/logParser.js` 并运行 `npm run test:log-parser` 确保所有测试全绿通过。
+
+2. **始终保持 TypeScript 类型安全与 Node 24 编译兼容**
+   - 严禁在参数中使用不兼容的联合类型或未校验的 any 转换。
+   - 每次修改核心功能后，运行 `npm run build` 确保 `tsc` 能够无错误编译输出到 `dist/`。
+
+3. **反爬与安全防护原则**
+   - 必须使用 `this.browser.utils.tryDismissAllMessages()` 消除各种中英文 Cookie/隐私/条款横幅。
+   - 必须使用 `GhostCursor` 或 `humanRandomDelay` 进行人类行为拟真，严禁使用突发机械性高频请求。
+
+4. **敏感凭证防泄漏**
+   - `.env` 文件存放个人微软账号密码、推送 Token，**严禁被 git 提交或打包**。
+   - 分享或发布时始终使用 `env.example`。

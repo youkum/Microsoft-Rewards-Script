@@ -15,10 +15,13 @@ export default class BrowserUtils {
         try {
             const buttons = [
                 { selector: '#acceptButton', label: 'AcceptButton' },
+                { selector: '[data-testid="accept-button"]', label: 'AcceptButton TestId' },
                 { selector: '#wcpConsentBannerCtrl > * > button:first-child', label: 'Bing Cookies Accept' },
                 { selector: '.ext-secondary.ext-button', label: '"Skip for now" Button' },
                 { selector: '#iLandingViewAction', label: 'iLandingViewAction' },
                 { selector: '#iShowSkip', label: 'iShowSkip' },
+                { selector: 'a#iShowSkip', label: 'a#iShowSkip' },
+                { selector: '#iCancel', label: 'iCancel' },
                 { selector: '#iNext', label: 'iNext' },
                 { selector: '#iLooksGood', label: 'iLooksGood' },
                 { selector: '#idSIButton9', label: 'idSIButton9' },
@@ -26,7 +29,15 @@ export default class BrowserUtils {
                 { selector: '.c-glyph.glyph-cancel', label: 'Mobile Welcome Button' },
                 { selector: '.maybe-later', label: 'Mobile Rewards App Banner' },
                 { selector: '#bnp_btn_accept', label: 'Bing Cookie Banner' },
-                { selector: '#reward_pivot_earn', label: 'Reward Coupon Accept' }
+                { selector: '#reward_pivot_earn', label: 'Reward Coupon Accept' },
+                { selector: 'button:has-text("接受")', label: '接受' },
+                { selector: 'button:has-text("同意")', label: '同意' },
+                { selector: 'button:has-text("以后再说")', label: '以后再说' },
+                { selector: 'button:has-text("暂且跳过")', label: '暂且跳过' },
+                { selector: 'a:has-text("以后再说")', label: '链接-以后再说' },
+                { selector: 'a:has-text("暂且跳过")', label: '链接-暂且跳过' },
+                { selector: 'button:has-text("No thanks")', label: 'No thanks' },
+                { selector: 'button:has-text("Skip for now")', label: 'Skip for now' }
             ]
 
             const checkVisible = await Promise.allSettled(

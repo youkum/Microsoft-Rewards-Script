@@ -1,0 +1,17 @@
+{
+  "services": {
+    "microsoft-rewards-script": {
+      "environment": {
+        "API_MODE": "true",
+        "API_HOST": "0.0.0.0",
+        "API_PORT": "3010",
+        "API_TOKEN": "${API_TOKEN:?API_TOKEN required}",
+        "RUN_ON_START": "false",
+        "API_ALLOW_CONFIG_WRITE": "false",
+        "API_ALLOW_CONFIG_REVEAL": "false",
+        "API_ALLOW_SCHEDULE_WRITE": "false",
+        "API_ALLOW_ENV_OVERRIDES": "false"
+      }
+    }
+  }
+}

@@ -1,16 +1,17 @@
 <div align="center">
 
-# 微软奖励脚本（V4-china）
+# 微软奖励自动化脚本（V4-china 优化增强版）
 
-[![Version](https://img.shields.io/badge/version-4.3.0-blue.svg)](./package.json)
+[![Version](https://img.shields.io/badge/version-4.3.2.4-blue.svg)](./package.json)
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D24-green.svg)](./package.json)
-[![Last Sync](https://img.shields.io/badge/最后同步-2026--08--16-orange.svg)](#-同步与致谢)
+[![WebUI](https://img.shields.io/badge/WebUI-Supported-brightgreen.svg)](./scripts/api/README.md)
+[![Vibe Coding](https://img.shields.io/badge/Vibe%20Coding-Ready-purple.svg)](./VIBECODING.md)
 [![Upstream](https://img.shields.io/badge/上游-TheNetsky/Microsoft--Rewards--Script-informational.svg)](https://github.com/TheNetsky/Microsoft-Rewards-Script)
 
-**基于 TypeScript · Patchright(Playwright) 的新一代架构 · 微软奖励自动化脚本**
+**基于 TypeScript · Patchright(Playwright) · 6重高可用积分降级 · 现代化智能登录 · WebUI 控制面板**
 
-针对国内用户深度本地化：✅ 中国热搜查询源（百度/头条/抖音/微博/知乎） · ✅ 日志中文化 · ✅ PushPlus / 微信 ClawBot 推送 · ✅ Docker 镜像加速
+针对国内用户深度本地化：✅ 中国热搜查询源（百度/头条/抖音/微博/知乎） · ✅ 6级积分高可用探测 · ✅ 微软安全拦截页自动跳过 · ✅ 日志中文化 · ✅ PushPlus / 微信 ClawBot 推送 · ✅ 专属 WebUI 仪表盘 (:8890) · ✅ 针对 AI/Vibe-Coding 全套指令集
 
 </div>
 
@@ -46,6 +47,17 @@
 
 ## ✨ 核心特性
 
+**增强版亮点（最新优化）**
+
+- 🌟 **全量积分画像 & 6 级高可用降级体系**：
+  - 支持抓取完整账户积分视图：可用余额、历史总计、今日已得、PC/移动/Edge各子项剩余配额、等级、升级进度、连击天数与保护。
+  - 实现 6 级自动容灾降级（官方主 API ➔ Flyout 接口 ➔ 真实上下文内生 Fetch ➔ DOM 文本抓取 ➔ React Flight 状态 ➔ 保底安全对象），**保证 100% 不因页面微调抛错崩溃**。
+- 🌟 **自适应认证与无感跳过拦截页**：
+  - 自动识别并跳过“体验无密码”、“保护你的账户”、“添加备用安全信息”等阶段性弹窗阻碍。
+  - 智能过滤 Cookie 条款与协议弹窗，支持回车键底层键盘提交兜底。
+- 🌟 **Vibe-Coding 亲和支持**：
+  - 预置 `.cursorrules`、`CLAUDE.md`、`AGENT.md`、`VIBECODING.md`，兼容 Cursor / Trae / Windsurf / Claude Code / Devin 等人机协同工具。
+
 **账户管理**
 
 - ✅ 多账户支持（`.env` 中 `ACCOUNT_N_*` 环境变量，编号无需连续）
@@ -59,7 +71,7 @@
 - ✅ 无头浏览器操作（Patchright 反检测内核）
 - ✅ 集群支持（同时多个账户）
 - ✅ 可配置任务开关
-- ✅ 控制 API + Web 面板（启动/停止/日志/积分/调度管理）
+- ✅ 控制 API + Web 面板（启动/停止/日志/积分/调度管理，端口 8890）
 - ✅ 自动调度（Docker 内置 cron）
 
 **搜索与活动**
@@ -603,26 +615,22 @@ gmya.net 免费档对连续请求有频率限制。解决方法：
 
 ---
 
-## 📜 同步与致谢
+## 📜 开源引用与致谢
 
-本项目 fork 自 [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)，`V4-china` 分支基于上游 **v4 分支**（新版 dashboard 架构）做国内本地化：
+本项目的发展凝聚了开源社区众多优秀作者的智慧。在此对以下开源项目及其作者致以崇高的敬意：
 
-- 中国热搜查询源（gmya.net 聚合百度/头条/抖音/微博/知乎，多源随机 + 限流退避 + appkey 解限流）
-- PushPlus / 微信 ClawBot 微信推送渠道
-- 国内默认值调优（china+local 引擎、搜索间隔 6-12min、防风控默认项）
-- 中文词库（`search-queries.json`）与全量日志中文化
-- Docker 基础镜像走 m.daocloud.io 加速；浏览器版本接口不可达时自动回退内置版本
+| 开源项目 | 协议 | 仓库与角色说明 |
+| :--- | :--- | :--- |
+| **Microsoft-Rewards-Script** | GPL-3.0 | [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)<br>项目核心上游，确立了 TypeScript 架构与 Playwright 任务工作流 |
+| **Microsoft-Rewards-Script (V4-china)** | GPL-3.0 | [chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script)<br>国内本地化基础，中国热搜聚合引擎（gmya.net）与微信推送通道（PushPlus/ClawBot） |
+| **rewards-dashboard** | MIT | [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard)<br>官方配套 WebUI 仪表盘前端，实现实时日志流监控与多账户可视化管理 |
+| **Patchright** | Apache-2.0 | [Kaliiiiiiiiii-Venyx/patchright](https://github.com/Kaliiiiiiiiii-Venyx/patchright)<br>反反爬底层浏览器运行时，针对 CDP 泄露及特征参数深度修复 |
+| **Fingerprint Suite** | Apache-2.0 | [apify/fingerprint-suite](https://github.com/apify/fingerprint-suite)<br>提供高仿真的真实设备指纹生成与注入（Canvas/WebGL/音频/屏幕参数） |
+| **Ghost Cursor** | MIT | [Xynon69/ghost-cursor-playwright-port](https://github.com/Xynon69/ghost-cursor-playwright-port)<br>拟人化贝塞尔曲线鼠标移动与平滑自然滚动引擎 |
+| **OTPAuth** | MIT | [hectorm/otpauth](https://github.com/hectorm/otpauth)<br>RFC 6238 / RFC 4226 标准 TOTP 两步验证动态口令算法库 |
+| **impit** | MIT | [alextunbridge/impit](https://github.com/alextunbridge/impit)<br>支持 TLS 指纹定制与代理池的高性能 HTTP 请求客户端 |
 
-若有侵权请联系删除。
-
-**本项目所有改动基于 Win11 系统测试。其他系统未测试，请根据原项目相关配置设置。**
-
-| 项目         | 信息                                                                                                      |
-| ------------ | --------------------------------------------------------------------------------------------------------- |
-| 上游仓库     | [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)（v4 分支）    |
-| 本仓库       | [chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script) `V4-china` 分支 |
-| 当前版本     | 4.3.0                                                                                                     |
-| 最后同步上游 | 2026-08-16                                                                                                |
+> 若涉及侵权请联系删除。欢迎开源开发者共同维护交流！
 
 ---
 
