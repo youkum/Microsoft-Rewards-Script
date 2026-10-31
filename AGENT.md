@@ -2,6 +2,7 @@
 
 This repository contains the optimized China edition of Microsoft Rewards Script with full WebUI control panel integration.
 - Repository: https://github.com/youkum/Microsoft-Rewards-Script (Branch: `V4-china`)
+- Mode: This project is completely secondary-developed and maintained by AI, with humans providing prompts and architectural suggestions.
 
 ## Essential Knowledge for AI Coding Agents
 

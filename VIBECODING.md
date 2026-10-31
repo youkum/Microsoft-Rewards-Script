@@ -1,5 +1,6 @@
 # Microsoft Rewards Script - Vibe-Coding 专属工程指南
 
+> 🤖 **核心声明**：**此项目由 AI 全面接手二次开发，人工只提供了开发建议和提示词优化。**
 > 本文档专为 **Vibe-Coding**（人机协同、AI 辅助编程，如 Cursor、Trae、Windsurf、Claude Code、Devin 等）量身打造，系统梳理项目核心架构、扩展模式、开源引用与调试最佳实践。
 
 - **官方主仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script)

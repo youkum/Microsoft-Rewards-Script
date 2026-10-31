@@ -3,6 +3,7 @@
 ## 项目概述
 本项目是基于 TypeScript + Patchright (Playwright 反反爬版) 的微软 Rewards 自动化与智能任务脚本（国内深度优化与 WebUI 协同版）。
 - **项目仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) (主力分支: `V4-china`)
+- **开发模式**: **此项目由 AI 全面接手二次开发，人工只提供了开发建议和提示词优化。**
 支持桌面端/移动端搜索、每日打卡、阅读赚积分、连击保护、微信推送通知，并配备了基于 Server-Sent Events (SSE) 的 WebUI 仪表盘系统。
 
 ## 技术栈与关键依赖

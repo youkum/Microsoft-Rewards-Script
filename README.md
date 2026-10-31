@@ -8,7 +8,7 @@
 [![License](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](./LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D24-green.svg)](./package.json)
 [![WebUI](https://img.shields.io/badge/WebUI-Supported-brightgreen.svg)](./scripts/api/README.md)
-[![Vibe Coding](https://img.shields.io/badge/Vibe%20Coding-Ready-purple.svg)](./VIBECODING.md)
+[![Vibe Coding](https://img.shields.io/badge/100%25-AI%20Secondary%20Developed-8A2BE2.svg)](./VIBECODING.md)
 [![Upstream](https://img.shields.io/badge/上游-TheNetsky/Microsoft--Rewards--Script-informational.svg)](https://github.com/TheNetsky/Microsoft-Rewards-Script)
 
 **基于 TypeScript · Patchright(Playwright) · 6重高可用积分降级 · 现代化智能登录 · WebUI 控制面板**
@@ -16,6 +16,10 @@
 针对国内用户深度本地化：✅ 中国热搜查询源（百度/头条/抖音/微博/知乎） · ✅ 6级积分高可用探测 · ✅ 微软安全拦截页自动跳过 · ✅ 日志中文化 · ✅ PushPlus / 微信 ClawBot 推送 · ✅ 专属 WebUI 仪表盘 (:8890) · ✅ 针对 AI/Vibe-Coding 全套指令集
 
 </div>
+
+> [!NOTE]
+> 🤖 **Vibe-Coding 模式说明**：**此项目由 AI 全面接手二次开发，人工只提供了开发建议和提示词优化。**
+> 无论是六重积分容灾降级架构、现代登录流程与干扰页跳过、WebUI 实时双语日志协同，还是 Docker 与工程化配置，均在开发者提示词引导下由 AI 独立完成全链路分析、编码、测试与部署。
 
 > ℹ️ **分支与项目说明**
 >
