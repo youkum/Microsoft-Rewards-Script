@@ -9,6 +9,7 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D24-green.svg)](./package.json)
 [![WebUI](https://img.shields.io/badge/WebUI-Supported-brightgreen.svg)](./scripts/api/README.md)
 [![Vibe Coding](https://img.shields.io/badge/100%25-AI%20Secondary%20Developed-8A2BE2.svg)](./VIBECODING.md)
+[![Changelog](https://img.shields.io/badge/Changelog-2026--11--02-blueviolet.svg)](./CHANGELOG.md)
 [![Upstream](https://img.shields.io/badge/上游-TheNetsky/Microsoft--Rewards--Script-informational.svg)](https://github.com/TheNetsky/Microsoft-Rewards-Script)
 
 **基于 TypeScript · Patchright(Playwright) · 6重高可用积分降级 · 现代化智能登录 · WebUI 控制面板**
@@ -35,6 +36,7 @@
 
 ## 📑 目录
 
+- [📝 最近更新日志 (CHANGELOG)](#-最近更新日志)
 - [✨ 核心特性](#-核心特性)
 - [🚀 快速开始](#-快速开始)
 - [📦 Windows 部署](#-windows-部署)
@@ -46,6 +48,17 @@
 - [⚠️ 注意事项](#-注意事项)
 - [📜 同步与致谢](#-同步与致谢)
 - [⚠️ 免责声明](#-免责声明)
+
+---
+
+## 📝 最近更新日志
+
+> 完整历史记录见 📄 [CHANGELOG.md](./CHANGELOG.md)。
+
+- **2026-11-02**：
+  - **WebUI 控制面板连通性加固**：优化端口映射与 Docker 桥接网络配置，解决 `8890` 端口无法从外部浏览器打开的问题；完善 HTTP Basic Auth 管理员密码配置指引。
+  - **多账号热替换与清理**：完善多账号配置规范，提供热更新账号并清理 SQLite 旧会话（`sessions.db`）的无痛迁移方案。
+  - **中文积分报表升级**：新增结构化中文积分报表输出，全面适配 WebUI 正则解析器与实时指标卡片展示。
 
 ---
 
