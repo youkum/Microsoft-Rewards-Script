@@ -1,4 +1,21 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
 import { accountIndexesFromEnv, envStrFrom, normalizeGeoLocale, normalizeLanguageCode } from '../env.js'
+import { getProjectRoot } from './lib.js'
+import { getMergedAccountEnv } from './envStore.js'
+
+const apiDir = path.dirname(fileURLToPath(import.meta.url))
+
+// Default source: .env overlaid by the WebUI-managed config/accounts.env
+// (block-level per slot), so account CRUD takes effect without a restart.
+function defaultSourceEnv() {
+    try {
+        return getMergedAccountEnv(getProjectRoot(apiDir))
+    } catch {
+        return process.env
+    }
+}
 
 function sanitizeProxyUrl(value) {
     try {
@@ -11,7 +28,7 @@ function sanitizeProxyUrl(value) {
     }
 }
 
-export function loadAccounts(sourceEnv = process.env) {
+export function loadAccounts(sourceEnv = defaultSourceEnv()) {
     const accounts = []
 
     for (const i of accountIndexesFromEnv(sourceEnv)) {
@@ -27,10 +44,22 @@ export function loadAccounts(sourceEnv = process.env) {
             langCode: normalizeLanguageCode(envStrFrom(sourceEnv, `ACCOUNT_${i}_LANG_CODE`) ?? 'en'),
             hasRecoveryEmail: Boolean(envStrFrom(sourceEnv, `ACCOUNT_${i}_RECOVERY_EMAIL`)),
             hasTotp: Boolean(envStrFrom(sourceEnv, `ACCOUNT_${i}_TOTP_SECRET`)),
+            hasPassword: Boolean(envStrFrom(sourceEnv, `ACCOUNT_${i}_PASSWORD`)),
+            saveFingerprint: {
+                mobile: ['1', 'true', 'yes', 'on'].includes(
+                    (envStrFrom(sourceEnv, `ACCOUNT_${i}_SAVE_FINGERPRINT_MOBILE`) ?? '').toLowerCase()
+                ),
+                desktop: ['1', 'true', 'yes', 'on'].includes(
+                    (envStrFrom(sourceEnv, `ACCOUNT_${i}_SAVE_FINGERPRINT_DESKTOP`) ?? '').toLowerCase()
+                )
+            },
             proxy: proxyUrl
                 ? {
                       url: sanitizeProxyUrl(proxyUrl),
                       port: envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_PORT`) ?? null,
+                      http: ['1', 'true', 'yes', 'on'].includes(
+                          (envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_HTTP`) ?? '').toLowerCase()
+                      ),
                       hasCredentials: Boolean(
                           envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_USERNAME`) &&
                           envStrFrom(sourceEnv, `ACCOUNT_${i}_PROXY_PASSWORD`)
@@ -42,7 +71,7 @@ export function loadAccounts(sourceEnv = process.env) {
     return accounts
 }
 
-export function buildSingleAccountEnv(accountIndex, sourceEnv = process.env) {
+export function buildSingleAccountEnv(accountIndex, sourceEnv = defaultSourceEnv()) {
     const index = Number(accountIndex)
     if (!Number.isSafeInteger(index) || index < 1) {
         const err = new Error('`accountIndex` must be a positive integer.')
@@ -76,7 +105,7 @@ export function buildSingleAccountEnv(accountIndex, sourceEnv = process.env) {
     }
 }
 
-export function buildExcludedAccountsEnv(excludedAccountIndexes, sourceEnv = process.env) {
+export function buildExcludedAccountsEnv(excludedAccountIndexes, sourceEnv = defaultSourceEnv()) {
     if (!Array.isArray(excludedAccountIndexes)) {
         const err = new Error('`excludedAccountIndexes` must be an array of positive integers.')
         err.code = 'BAD_REQUEST'

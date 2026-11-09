@@ -18,6 +18,18 @@ import { readSchedule, writeSchedule } from './scheduleStore.js'
 import { deleteStoredSessions, listStoredSessions } from './sessionStore.js'
 import { resolveRunCommand } from './runCommand.js'
 import {
+    addAccount as storeAddAccount,
+    deleteAccount as storeDeleteAccount,
+    flattenAccountPayload,
+    getMergedAccountEnv,
+    getSlotSources,
+    updateAccount as storeUpdateAccount,
+    validateAccountInput
+} from './envStore.js'
+import { envStrFrom } from '../env.js'
+import { appendRunRecord, readPointsHistory } from './pointsHistory.js'
+import { testProxy } from './proxyTester.js'
+import {
     log,
     parseArgs,
     findUnknownOptions,
@@ -118,6 +130,112 @@ const ALLOW_SCHEDULE_WRITE = envBool('API_ALLOW_SCHEDULE_WRITE', false)
 const RUN_HISTORY = integerSetting('API_RUN_HISTORY', envStr('API_RUN_HISTORY'), 20)
 const DIAG_DIR = envStr('API_DIAGNOSTICS_DIR') ?? path.join(projectRoot, 'diagnostics')
 
+// ── Embedded WebUI ──────────────────────────────────────────────────────────
+const WEB_DIR = path.join(__dirname, 'web')
+const DASHBOARD_USERNAME = envStr('DASHBOARD_USERNAME') ?? 'admin'
+const DASHBOARD_PASSWORD = envStr('DASHBOARD_PASSWORD')
+const SESSION_COOKIE = 'mrs_dashboard'
+const SESSION_TTL_MS = integerSetting('API_SESSION_TTL_HOURS', envStr('API_SESSION_TTL_HOURS'), 168, { min: 1 }) * 3_600_000
+const ALLOW_ACCOUNT_WRITE = envBool('API_ALLOW_ACCOUNT_WRITE', true)
+const PROXY_TEST_TIMEOUT_MS = integerSetting('API_PROXY_TEST_TIMEOUT_MS', envStr('API_PROXY_TEST_TIMEOUT_MS'), 10_000, { min: 1000 })
+const STATIC_FILES = new Map([
+    ['/', { file: 'index.html', type: 'text/html; charset=utf-8' }],
+    ['/index.html', { file: 'index.html', type: 'text/html; charset=utf-8' }],
+    ['/app.js', { file: 'app.js', type: 'text/javascript; charset=utf-8' }],
+    ['/style.css', { file: 'style.css', type: 'text/css; charset=utf-8' }],
+    ['/favicon.svg', { file: 'favicon.svg', type: 'image/svg+xml' }]
+])
+
+// Session secret: explicit env > API_TOKEN > persisted random value.
+function getSessionSecret() {
+    const explicit = envStr('DASHBOARD_SESSION_SECRET')
+    if (explicit) return explicit
+    if (TOKEN) return TOKEN
+    const secretFile = path.join(projectRoot, 'config', '.session-secret')
+    try {
+        const existing = fs.readFileSync(secretFile, 'utf8').trim()
+        if (existing) return existing
+    } catch {}
+    const generated = crypto.randomBytes(32).toString('hex')
+    fs.mkdirSync(path.dirname(secretFile), { recursive: true })
+    fs.writeFileSync(secretFile, generated + '\n', { encoding: 'utf8', mode: 0o600 })
+    return generated
+}
+const SESSION_SECRET = getSessionSecret()
+
+function sign(payload) {
+    return crypto.createHmac('sha256', SESSION_SECRET).update(payload).digest('base64url')
+}
+
+function createSessionToken(username) {
+    const payload = Buffer.from(JSON.stringify({ u: username, exp: Date.now() + SESSION_TTL_MS })).toString('base64url')
+    return `${payload}.${sign(payload)}`
+}
+
+function verifySessionToken(token) {
+    if (typeof token !== 'string') return null
+    const dot = token.indexOf('.')
+    if (dot <= 0) return null
+    const payload = token.slice(0, dot)
+    const expected = sign(payload)
+    const provided = token.slice(dot + 1)
+    const bufA = Buffer.from(provided)
+    const bufB = Buffer.from(expected)
+    if (bufA.length !== bufB.length || !crypto.timingSafeEqual(bufA, bufB)) return null
+    try {
+        const data = JSON.parse(Buffer.from(payload, 'base64url').toString('utf8'))
+        if (typeof data.u !== 'string' || typeof data.exp !== 'number' || data.exp < Date.now()) return null
+        return data
+    } catch {
+        return null
+    }
+}
+
+function sessionFromReq(req) {
+    const header = req.headers['cookie']
+    if (typeof header !== 'string') return null
+    for (const part of header.split(';')) {
+        const eq = part.indexOf('=')
+        if (eq === -1) continue
+        if (part.slice(0, eq).trim() === SESSION_COOKIE) {
+            return verifySessionToken(decodeURIComponent(part.slice(eq + 1).trim()))
+        }
+    }
+    return null
+}
+
+function sessionCookieHeader(token, maxAgeSeconds) {
+    return `${SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAgeSeconds}`
+}
+
+// Simple in-memory login throttle: 10 failures per IP per 15 minutes.
+const loginAttempts = new Map()
+function loginThrottled(ip) {
+    const entry = loginAttempts.get(ip)
+    if (!entry || entry.resetAt < Date.now()) return false
+    return entry.count >= 10
+}
+function recordLoginFailure(ip) {
+    const entry = loginAttempts.get(ip)
+    if (!entry || entry.resetAt < Date.now()) {
+        loginAttempts.set(ip, { count: 1, resetAt: Date.now() + 15 * 60 * 1000 })
+    } else {
+        entry.count++
+    }
+    if (loginAttempts.size > 1000) loginAttempts.clear()
+}
+
+// 'token' | 'session' | 'open' — how this request is authorized.
+function authVia(req, url) {
+    if (TOKEN) {
+        const provided = tokenFromReq(req, url)
+        if (provided && safeEqual(provided, TOKEN)) return 'token'
+    }
+    if (sessionFromReq(req)) return 'session'
+    if (!TOKEN && !DASHBOARD_PASSWORD) return 'open'
+    return null
+}
+
 const { command, args } = resolveRunCommand({ projectRoot })
 
 const pm = new ProcessManager({
@@ -151,6 +269,16 @@ pm.on('log', entry => {
     else process.stdout.write(line)
 })
 
+// Persist every finished run to config/points-history.jsonl (WebUI 积分历史).
+pm.on('exit', () => {
+    try {
+        const run = pm.getHistory()[0]
+        if (run) appendRunRecord(projectRoot, toHistoryRecord(run))
+    } catch (err) {
+        log('WARN', 'Could not append points history:', err instanceof Error ? err.message : err)
+    }
+})
+
 function toHistoryRecord(entry) {
     return {
         startedAt: entry.startedAt,
@@ -158,9 +286,11 @@ function toHistoryRecord(entry) {
         exit: entry.exit,
         version: entry.run?.version ?? null,
         collected: entry.run?.collected ?? 0,
+        totals: entry.run?.totals ?? null,
         accounts: (entry.run?.accounts ?? []).map(a => ({
             email: a.email,
             collected: a.collectedPoints ?? a.live?.gained ?? 0,
+            balance: a.balance ?? a.live?.balance ?? null,
             success: a.success,
             error: a.error,
             streakProtection: a.streakProtection ?? null,
@@ -169,11 +299,20 @@ function toHistoryRecord(entry) {
     }
 }
 
+// loadAccounts() enriched with the config source of each slot ('env' | 'web').
+function accountsView() {
+    const sources = getSlotSources(projectRoot)
+    return loadAccounts().map(account => {
+        const source = sources.get(String(account.index)) ?? 'env'
+        return { ...account, source, webManaged: source === 'web' }
+    })
+}
+
 function applyCors(res) {
     res.setHeader('Access-Control-Allow-Origin', CORS_ORIGIN)
     res.setHeader('Vary', 'Origin')
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key')
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-API-Key, X-Requested-With')
     res.setHeader('Access-Control-Max-Age', '86400')
 }
 
@@ -203,11 +342,16 @@ function safeEqual(a, b) {
     return crypto.timingSafeEqual(bufA, bufB)
 }
 
-function isAuthorized(req, url) {
-    if (!TOKEN) return true
-    const provided = tokenFromReq(req, url)
-    if (!provided) return false
-    return safeEqual(provided, TOKEN)
+function serveStatic(res, pathname) {
+    const entry = STATIC_FILES.get(pathname)
+    const full = path.join(WEB_DIR, entry.file)
+    try {
+        const body = fs.readFileSync(full)
+        res.writeHead(200, { 'Content-Type': entry.type, 'Cache-Control': 'no-cache' })
+        return res.end(body)
+    } catch {
+        return sendJson(res, 500, { error: `Embedded WebUI file missing: ${entry.file}`, code: 'WEBUI_MISSING' })
+    }
 }
 
 async function readJsonBody(req, limitBytes = 1_000_000) {
@@ -323,11 +467,32 @@ const requestHandler = async (req, res) => {
         return res.end()
     }
 
-    if (TOKEN && !isAuthorized(req, url)) {
-        return sendJson(res, 401, {
-            error: 'Unauthorized',
-            hint: 'Provide the API token via Authorization: Bearer or X-API-Key. Browser EventSource may use ?token= only on /events. All endpoints require authentication while API_TOKEN is set.'
-        })
+    // Embedded WebUI shell is reachable for web clients; JSON API index is preserved for API clients.
+    if ((method === 'GET' || method === 'HEAD') && STATIC_FILES.has(pathname)) {
+        const accept = String(req.headers['accept'] || '')
+        if (pathname === '/' && accept.includes('application/json') && !accept.includes('text/html')) {
+            // pass through to JSON API index on /
+        } else {
+            return serveStatic(res, pathname)
+        }
+    }
+
+    const isPublicEndpoint =
+        pathname === '/health' ||
+        (pathname === '/auth/login' && method === 'POST') ||
+        (pathname === '/auth/me' && method === 'GET')
+    if (!isPublicEndpoint) {
+        const via = authVia(req, url)
+        if (!via) {
+            return sendJson(res, 401, {
+                error: 'Unauthorized',
+                hint: 'Log in at / with DASHBOARD_USERNAME/DASHBOARD_PASSWORD (session cookie), or provide API_TOKEN via Authorization: Bearer / X-API-Key.'
+            })
+        }
+        // Cookie-authenticated state changes require a custom header (CSRF defense).
+        if (via === 'session' && !['GET', 'HEAD', 'OPTIONS'].includes(method) && !req.headers['x-requested-with']) {
+            return sendJson(res, 403, { error: 'Missing X-Requested-With header for cookie-authenticated write.', code: 'CSRF' })
+        }
     }
 
     try {
@@ -336,17 +501,21 @@ const requestHandler = async (req, res) => {
             return sendJson(res, 200, {
                 name: pkgName,
                 version: pkgVersion,
-                message: 'Control API',
-                authRequired: Boolean(TOKEN),
-                stateless: true,
+                message: 'Control API + embedded WebUI (open / in a browser)',
+                authRequired: Boolean(TOKEN || DASHBOARD_PASSWORD),
+                webui: true,
                 endpoints: [
                     'GET /health',
                     'GET /status',
                     'GET /points',
+                    'GET /points/history',
                     'GET /logs',
                     'GET /errors',
                     'GET /history',
                     'GET /accounts',
+                    'POST /accounts',
+                    'PATCH|DELETE /accounts/:index',
+                    'POST /accounts/:index/proxy-test',
                     'GET /sessions',
                     'GET /diagnostics',
                     'GET /events',
@@ -360,7 +529,10 @@ const requestHandler = async (req, res) => {
                     'POST /shutdown',
                     'DELETE /sessions/:email',
                     'PUT|PATCH /config',
-                    'PUT|PATCH /schedule'
+                    'PUT|PATCH /schedule',
+                    'POST /auth/login',
+                    'POST /auth/logout',
+                    'GET /auth/me'
                 ]
             })
         }
@@ -373,7 +545,58 @@ const requestHandler = async (req, res) => {
                 version: pkgVersion,
                 state: pm.getStatus().state,
                 uptimeSec: Math.round((Date.now() - startedAt) / 1000),
-                authRequired: Boolean(TOKEN)
+                authRequired: Boolean(TOKEN || DASHBOARD_PASSWORD)
+            })
+        }
+
+        // ── Embedded WebUI auth ────────────────────────────────────────────
+        if (method === 'POST' && pathname === '/auth/login') {
+            if (!DASHBOARD_PASSWORD) {
+                return sendJson(res, 400, {
+                    error: 'Dashboard login is not configured. Set DASHBOARD_PASSWORD (and optionally DASHBOARD_USERNAME) in .env and restart the API.',
+                    code: 'AUTH_NOT_CONFIGURED'
+                })
+            }
+            const ip = req.socket.remoteAddress ?? 'unknown'
+            if (loginThrottled(ip)) {
+                return sendJson(res, 429, { error: '尝试次数过多,请 15 分钟后再试。', code: 'RATE_LIMITED' })
+            }
+            const body = await readJsonObject(req)
+            const username = typeof body.username === 'string' ? body.username : ''
+            const password = typeof body.password === 'string' ? body.password : ''
+            const userOk = safeEqual(username, DASHBOARD_USERNAME)
+            const passOk = safeEqual(password, DASHBOARD_PASSWORD)
+            if (!(userOk && passOk)) {
+                recordLoginFailure(ip)
+                return sendJson(res, 401, { error: '用户名或密码错误。', code: 'BAD_CREDENTIALS' })
+            }
+            const token = createSessionToken(DASHBOARD_USERNAME)
+            res.setHeader('Set-Cookie', sessionCookieHeader(token, Math.floor(SESSION_TTL_MS / 1000)))
+            pm.note('info', `Dashboard login for ${DASHBOARD_USERNAME} (${ip}).`)
+            return sendJson(res, 200, { ok: true, username: DASHBOARD_USERNAME })
+        }
+
+        if (method === 'POST' && pathname === '/auth/logout') {
+            res.setHeader('Set-Cookie', sessionCookieHeader('', 0))
+            return sendJson(res, 200, { ok: true })
+        }
+
+        if (method === 'GET' && pathname === '/auth/me') {
+            const via = authVia(req, url)
+            return sendJson(res, 200, {
+                authenticated: Boolean(via),
+                via,
+                version: pkgVersion,
+                username: via === 'session' || via === 'token' ? (via === 'session' ? sessionFromReq(req)?.u : null) : null,
+                dashboardLoginConfigured: Boolean(DASHBOARD_PASSWORD),
+                tokenConfigured: Boolean(TOKEN),
+                capabilities: {
+                    accountWrite: ALLOW_ACCOUNT_WRITE,
+                    configWrite: ALLOW_CONFIG_WRITE,
+                    scheduleWrite: ALLOW_SCHEDULE_WRITE,
+                    envOverrides: ALLOW_ENV_OVERRIDES,
+                    revealConfig: REVEAL_ENABLED
+                }
             })
         }
 
@@ -385,6 +608,13 @@ const requestHandler = async (req, res) => {
         // point read live
         if (method === 'GET' && pathname === '/points') {
             return sendJson(res, 200, pm.getPoints())
+        }
+
+        // persistent points history (survives API restarts; recorded on run exit)
+        if (method === 'GET' && pathname === '/points/history') {
+            const days = clampInt(url.searchParams.get('days'), 1, 3650, 30)
+            const limit = clampInt(url.searchParams.get('limit'), 1, 5000, 500)
+            return sendJson(res, 200, readPointsHistory(projectRoot, { days, limit }))
         }
 
         // log read
@@ -421,8 +651,115 @@ const requestHandler = async (req, res) => {
 
         // account overview
         if (method === 'GET' && pathname === '/accounts') {
-            const accounts = mergeAccountStats(loadAccounts(), pm.getHistory().map(toHistoryRecord))
-            return sendJson(res, 200, { accounts, count: accounts.length })
+            const accounts = accountsView().map(account => {
+                const { emailKey, ...safe } = mergeAccountStats([account], pm.getHistory().map(toHistoryRecord))[0]
+                void emailKey
+                return safe
+            })
+            return sendJson(res, 200, { accounts, count: accounts.length, accountsEnvPath: path.join(projectRoot, 'config', 'accounts.env') })
+        }
+
+        // ── Account CRUD (writes config/accounts.env; .env accounts are read-only here) ──
+        if (method === 'POST' && pathname === '/accounts') {
+            if (!ALLOW_ACCOUNT_WRITE) {
+                return sendJson(res, 403, { error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=false to disable / true to enable.' })
+            }
+            const body = await readJsonObject(req)
+            try {
+                const fields = validateAccountInput(flattenAccountPayload(body))
+                const slot = storeAddAccount(projectRoot, fields)
+                pm.note('info', `Account ${fields.email} added as ACCOUNT_${slot} via WebUI.`)
+                return sendJson(res, 201, {
+                    created: true,
+                    slot,
+                    account: accountsView().find(account => account.index === slot) ?? null,
+                    appliesOnNextRun: true
+                })
+            } catch (err) {
+                if (err.code === 'EMAIL_CONFLICT' || err.code === 'VALIDATION_FAILED') {
+                    return sendJson(res, err.code === 'EMAIL_CONFLICT' ? 409 : 422, { error: err.message, code: err.code, errors: err.errors })
+                }
+                if (err.code === 'BAD_REQUEST') return sendJson(res, 400, { error: err.message, code: err.code })
+                return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+            }
+        }
+
+        if ((method === 'PATCH' || method === 'PUT') && /^\/accounts\/\d+$/.test(pathname)) {
+            if (!ALLOW_ACCOUNT_WRITE) {
+                return sendJson(res, 403, { error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=true to enable.' })
+            }
+            const slot = Number(pathname.split('/')[2])
+            const existing = accountsView().find(account => account.index === slot)
+            if (!existing) return sendJson(res, 404, { error: `ACCOUNT_${slot} 不存在。`, code: 'ACCOUNT_NOT_FOUND' })
+            if (existing.source !== 'web') {
+                return sendJson(res, 409, {
+                    error: `ACCOUNT_${slot} 来自 .env(基础文件配置),当前 WebUI 仅管理 config/accounts.env。请直接在 .env 中编辑该账号，或在 WebUI 中添加新账号。`,
+                    code: 'NOT_WEB_MANAGED'
+                })
+            }
+            const body = await readJsonObject(req)
+            try {
+                const flat = flattenAccountPayload(body)
+                if ('password' in flat && flat.password === '') {
+                    // Empty password field on edit = keep existing password.
+                    delete flat.password
+                }
+                storeUpdateAccount(projectRoot, slot, flat)
+                pm.note('info', `ACCOUNT_${slot} (${existing.email}) updated via WebUI.`)
+                return sendJson(res, 200, {
+                    updated: true,
+                    slot,
+                    account: accountsView().find(account => account.index === slot) ?? null,
+                    appliesOnNextRun: true
+                })
+            } catch (err) {
+                if (err.code === 'VALIDATION_FAILED') return sendJson(res, 422, { error: err.message, code: err.code, errors: err.errors })
+                if (err.code === 'NOT_WEB_MANAGED' || err.code === 'BAD_REQUEST') return sendJson(res, err.code === 'BAD_REQUEST' ? 400 : 409, { error: err.message, code: err.code })
+                return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+            }
+        }
+
+        if (method === 'DELETE' && /^\/accounts\/\d+$/.test(pathname)) {
+            if (!ALLOW_ACCOUNT_WRITE) {
+                return sendJson(res, 403, { error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=true to enable.' })
+            }
+            const slot = Number(pathname.split('/')[2])
+            const existing = accountsView().find(account => account.index === slot)
+            if (!existing) return sendJson(res, 404, { error: `ACCOUNT_${slot} 不存在。`, code: 'ACCOUNT_NOT_FOUND' })
+            if (existing.source !== 'web') {
+                return sendJson(res, 409, {
+                    error: `ACCOUNT_${slot} 来自 .env(手工配置),请在 .env 中删除,WebUI 仅管理 config/accounts.env。`,
+                    code: 'NOT_WEB_MANAGED'
+                })
+            }
+            try {
+                const removed = storeDeleteAccount(projectRoot, slot)
+                pm.note('info', `ACCOUNT_${slot} (${existing.email}) removed via WebUI (${removed} env line(s)).`)
+                return sendJson(res, 200, { deleted: true, slot, removed, appliesOnNextRun: true })
+            } catch (err) {
+                if (err.code === 'NOT_WEB_MANAGED') return sendJson(res, 409, { error: err.message, code: err.code })
+                return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+            }
+        }
+
+        // Proxy connectivity test for one account (uses the account's proxy settings).
+        if (method === 'POST' && /^\/accounts\/\d+\/proxy-test$/.test(pathname)) {
+            const slot = Number(pathname.split('/')[2])
+            const account = accountsView().find(item => item.index === slot)
+            if (!account) return sendJson(res, 404, { error: `ACCOUNT_${slot} 不存在。`, code: 'ACCOUNT_NOT_FOUND' })
+            if (!account.proxy?.url) {
+                return sendJson(res, 400, { error: `ACCOUNT_${slot} 未配置代理。`, code: 'NO_PROXY' })
+            }
+            const merged = getMergedAccountEnv(projectRoot)
+            const result = await testProxy({
+                url: account.proxy.url,
+                port: account.proxy.port ?? undefined,
+                username: envStrFrom(merged, `ACCOUNT_${slot}_PROXY_USERNAME`),
+                password: envStrFrom(merged, `ACCOUNT_${slot}_PROXY_PASSWORD`),
+                timeoutMs: PROXY_TEST_TIMEOUT_MS
+            })
+            pm.note(result.ok ? 'info' : 'warn', `Proxy test for ACCOUNT_${slot}: ${result.ok ? `exit ${result.ip} (${result.latencyMs}ms)` : result.error}`)
+            return sendJson(res, 200, { slot, email: account.email, ...result })
         }
 
         // session list
@@ -812,23 +1149,23 @@ server.on('error', err => {
 })
 
 server.listen(PORT, HOST, () => {
-    log('INFO', `${pkgName} control API listening on http://${HOST}:${PORT} (headless - no UI)`)
+    log('INFO', `${pkgName} control API listening on http://${HOST}:${PORT} (WebUI: http://${HOST === '0.0.0.0' ? '<server-ip>' : HOST}:${PORT}/)`)
     log('INFO', `Launch command: ${command} ${args.join(' ')}`.trim())
     log(
         'INFO',
-        `Auth: ${TOKEN ? 'shared token required (API_TOKEN)' : 'DISABLED (no API_TOKEN set)'} | CORS origin: ${CORS_ORIGIN}`
+        `Auth: ${TOKEN ? 'API token' : 'no'}${DASHBOARD_PASSWORD ? ' + dashboard login' : ''}${!TOKEN && !DASHBOARD_PASSWORD ? ' DISABLED (no API_TOKEN / DASHBOARD_PASSWORD set)' : ''} | CORS origin: ${CORS_ORIGIN}`
     )
     log(
         'INFO',
-        `Runtime state: memory-only | config writes: ${ALLOW_CONFIG_WRITE ? 'on' : 'off'} | schedule writes: ${ALLOW_SCHEDULE_WRITE ? 'on' : 'off'} | session deletion: account-scoped`
+        `Runtime state: points history persisted | config writes: ${ALLOW_CONFIG_WRITE ? 'on' : 'off'} | schedule writes: ${ALLOW_SCHEDULE_WRITE ? 'on' : 'off'} | account writes: ${ALLOW_ACCOUNT_WRITE ? 'on' : 'off'} | session deletion: account-scoped`
     )
-    if (!TOKEN) {
+    if (!TOKEN && !DASHBOARD_PASSWORD) {
         const loopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1'
         log(
             loopback ? 'WARN' : 'ERROR',
             loopback
-                ? 'No API_TOKEN set - the API is open to anything on this machine. Set API_TOKEN and give the dashboard the same value as CONTROL_API_TOKEN.'
-                : 'API is bound to a non-loopback address WITHOUT a token - anyone who can reach this port can start/stop the bot and read your logs. Set API_TOKEN.'
+                ? 'No API_TOKEN and no DASHBOARD_PASSWORD set - the API/WebUI is open to anything on this machine. Set DASHBOARD_PASSWORD in .env to protect it.'
+                : 'API/WebUI is bound to a non-loopback address WITHOUT credentials - anyone who can reach this port can start/stop the bot, edit accounts and read your logs. Set DASHBOARD_PASSWORD or API_TOKEN.'
         )
     }
 
@@ -838,7 +1175,8 @@ server.listen(PORT, HOST, () => {
         pid: process.pid,
         name: pkgName,
         version: pkgVersion,
-        auth: Boolean(TOKEN)
+        auth: Boolean(TOKEN || DASHBOARD_PASSWORD),
+        webui: true
     }
     process.stdout.write(`__API_READY__ ${JSON.stringify(ready)}\n`)
 })

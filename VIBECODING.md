@@ -1,6 +1,6 @@
 # Microsoft Rewards Script - Vibe-Coding 专属工程指南
 
-> 🤖 **核心声明**：**此项目由 AI 全面接手二次开发，人工只提供了开发建议和提示词优化。**
+> 🤖 **核心声明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
 > 本文档专为 **Vibe-Coding**（人机协同、AI 辅助编程，如 Cursor、Trae、Windsurf、Claude Code、Devin 等）量身打造，系统梳理项目核心架构、扩展模式、开源引用与调试最佳实践。
 
 - **官方主仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script)
@@ -140,6 +140,14 @@
 8. **[alextunbridge/impit](https://github.com/alextunbridge/impit)**
    - **协议**: MIT License
    - **贡献**: 高性能且支持 TLS 指纹定制的 HTTP 客户端。
+
+9. **[TooTallNate/node-https-proxy-agent](https://github.com/TooTallNate/proxy-agents)**
+   - **协议**: MIT License
+   - **贡献**: 提供 HTTP/HTTPS 代理连接与隧道传输能力，驱动控制面板的代理连通性检测。
+
+10. **[TooTallNate/node-socks-proxy-agent](https://github.com/TooTallNate/proxy-agents)**
+   - **协议**: MIT License
+   - **贡献**: 提供 SOCKS4/SOCKS5 代理客户端协议封装，支持无认证 SOCKS 代理连通性探测。
 
 ---
 

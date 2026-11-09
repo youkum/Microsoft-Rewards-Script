@@ -971,6 +971,75 @@ The `runs`, `totalCollected`, `successStreak`, and `last*` fields are calculated
 from this API process's in-memory history and therefore reset after an API
 restart.
 
+## Embedded WebUI and account management
+
+Since the embedded WebUI update, the API server also serves a browser control
+panel from `/` (files under `scripts/api/web/`). The panel covers every control
+operation: run start/stop/restart (all or single accounts), account CRUD with
+per-account proxies and proxy testing, persistent points history, live SSE logs,
+schedule editing, config editing, and session/diagnostics management. All
+pre-existing endpoints keep their semantics, so external dashboards such as
+[rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) keep working.
+
+### Dashboard session auth
+
+`POST /auth/login` with `{"username": "...", "password": "..."}` validates
+against `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` and sets an HMAC-signed
+`HttpOnly` session cookie (default TTL 7 days, `API_SESSION_TTL_HOURS` to
+change). Session-authenticated write requests must send the
+`X-Requested-With: XMLHttpRequest` header (CSRF defense). `POST /auth/logout`
+clears the cookie, `GET /auth/me` reports the current auth state and the
+effective write capabilities. Login attempts are rate-limited per IP
+(10 failures / 15 minutes). `API_TOKEN` bearer/key auth continues to work for
+programmatic access and is unaffected.
+
+### Account CRUD (writes `config/accounts.env`)
+
+Account writes always go to `config/accounts.env` (atomic write, one-time `.bak`
+backup). Accounts from `.env` remain visible but read-only in the panel; the
+two sources are merged per slot with `config/accounts.env` winning, and the bot
+(`src/util/Load.ts`) applies the same overlay so cron-triggered Docker runs see
+web-managed accounts too.
+
+- `POST /accounts` — add an account in the lowest free slot. Body:
+  `{"email", "password"?, "totpSecret"?, "recoveryEmail"?, "langCode"?,
+  "geoLocale"?, "proxy": {"url", "port"?, "username"?, "password"?, "http"?},
+  "saveFingerprint": {"mobile"?, "desktop"?}}`. Returns `201` with the assigned
+  slot; `409 EMAIL_CONFLICT` when the email already exists; `422` on validation
+  errors (email format, TOTP base32, proxy protocol whitelist http/https/socks4/socks5,
+  port range, BCP 47 lang tag).
+- `PATCH|PUT /accounts/:index` — update a web-managed slot. Omitted fields are
+  preserved, an empty `password` keeps the stored one, an empty `proxy.url`
+  clears the whole proxy block. `409 NOT_WEB_MANAGED` for `.env` slots.
+- `DELETE /accounts/:index` — remove a web-managed slot. `409 NOT_WEB_MANAGED`
+  for `.env` slots (delete those by editing `.env`).
+- `POST /accounts/:index/proxy-test` — send a request through that account's
+  proxy to an IP echo service; returns `{ok, ip, country, countryCode, latencyMs}`
+  or `{ok: false, error}`. Supports http/https/socks4/socks5; SOCKS credentials
+  are rejected (matching the browser's limitation). Hard timeout via
+  `API_PROXY_TEST_TIMEOUT_MS` (default 10000).
+
+All account write endpoints are gated by `API_ALLOW_ACCOUNT_WRITE`
+(default `true`).
+
+### `GET /points/history`
+
+Persistent run history backed by `config/points-history.jsonl` (one JSON line
+per finished run, appended on every run exit, rotated at ~5 MB). Unlike
+`GET /history` this survives API restarts. Query parameters: `days` (1-3650,
+default 30), `limit` (1-5000, default 500).
+
+Response: `{path, days, totals: {runs, collected, successes}, daily: [{date,
+collected, runs, successes}], perAccount: [{email, runs, totalCollected,
+successes, lastCollected, lastRunAt, lastBalance}], records: [...]}` with
+records newest-first.
+
+```bash
+curl --request GET \
+  --url 'http://127.0.0.1:3010/points/history?days=30' \
+  --header 'Authorization: Bearer YOUR_API_TOKEN'
+```
+
 ## Session management
 
 The session endpoints use the `sessions.db` located under the configured

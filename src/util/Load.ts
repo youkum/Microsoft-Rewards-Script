@@ -60,6 +60,48 @@ function ensureEnvLoaded(): void {
             process.env[key] = value
         }
     }
+
+    applyAccountsEnvOverlay()
+}
+
+// Overlay the WebUI-managed account file (config/accounts.env): a slot defined
+// there fully replaces the same ACCOUNT_<N>_* slot from .env, so accounts added
+// from the embedded dashboard apply to every run (including cron-triggered ones
+// in Docker) without touching this process's start environment.
+function applyAccountsEnvOverlay(): void {
+    const root = getProjectRoot()
+    const candidates = [
+        path.join(root, 'config', 'accounts.env'),
+        path.join(process.cwd(), 'config', 'accounts.env')
+    ]
+    const accountsFile = candidates.find(p => fs.existsSync(p))
+    if (!accountsFile) return
+
+    const parsed: { key: string; value: string }[] = []
+    for (const line of fs.readFileSync(accountsFile, 'utf-8').split(/\r?\n/)) {
+        const trimmed = line.trim()
+        if (!trimmed || trimmed.startsWith('#')) continue
+        const eq = trimmed.indexOf('=')
+        if (eq === -1) continue
+        const key = trimmed.slice(0, eq).trim()
+        let value = trimmed.slice(eq + 1).trim()
+        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+            value = value.slice(1, -1)
+        }
+        if (/^ACCOUNT_\d+_/.test(key)) parsed.push({ key, value })
+    }
+    if (!parsed.length) return
+
+    const webSlots = new Set(parsed.map(entry => /^ACCOUNT_(\d+)_/.exec(entry.key)?.[1] ?? ''))
+    webSlots.delete('')
+
+    for (const key of Object.keys(process.env)) {
+        const slot = /^ACCOUNT_(\d+)_/.exec(key)?.[1]
+        if (slot && webSlots.has(slot)) delete process.env[key]
+    }
+    for (const { key, value } of parsed) {
+        process.env[key] = value
+    }
 }
 
 function envStr(key: string): string | undefined {

@@ -3,7 +3,12 @@
 ## Project Summary
 Microsoft Rewards Script (China Edition with WebUI Dashboard).
 - Repository: https://github.com/youkum/Microsoft-Rewards-Script (Branch: `V4-china`)
+- Maintenance: Fully secondary-developed by AI with human assistance, where humans provided prompts and architectural guidance (此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化).
 A TypeScript & Patchright-based automated agent for Microsoft Rewards tasks, featuring a resilient 6-tier points fallback system, adaptive login state machine, and a companion WebUI control panel.
+
+> **Review/handoff note:** the embedded WebUI modification (account CRUD, proxy testing, persistent points
+> history) is documented in [`AI-HANDOFF.md`](./AI-HANDOFF.md) — read it before changing `scripts/api/` or
+> `src/util/Load.ts`, and run `npm run test:api` in addition to `test:log-parser`.
 
 ## Common Developer Commands
 ```bash

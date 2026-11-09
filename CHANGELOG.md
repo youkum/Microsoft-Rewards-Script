@@ -4,6 +4,46 @@
 
 ---
 
+## [2026-11-09] - GLM 重构版本深度审查与加固优化
+
+### 🛡️ 架构审查与修复
+1. **API 内容协商与路由解耦**：优化 `server.js` 中静态 WebUI 路由与 JSON API 发现端点，当客户端通过 `Accept: application/json` 请求 `GET /` 时返回标准 API 索引，浏览器访问时正常托管单页面板，消除死代码。
+2. **跨域预检与 CSRF 协同加固**：在全局 CORS `Access-Control-Allow-Headers` 中补充 `X-Requested-With`，确保跨域 Cookie 会话写操作的预检请求正常放行。
+3. **积分历史本地时区分组修复**：在 `pointsHistory.js` 中引入基于环境时区（默认 `Asia/Shanghai`）的日期归一化算法，彻底解决 UTC 跨天导致国内清晨 7:00 任务被错误记录到前一天的统计时差问题。
+4. **代理协议缺省端口纠偏**：修正 `proxyTester.js` 中 SOCKS4/5 协议在缺省端口时的回退逻辑，由不合常理的 80 端口纠正为标准 SOCKS 端口 1080。
+5. **账号编辑唯一性防重校验**：在 `envStore.js` 的 `updateAccount` 方法中补充了针对其他已有槽位的邮箱唯一性冲突检测（`EMAIL_CONFLICT`），杜绝改名时分配重复邮箱。
+6. **前端 XSS 免疫强化**：清理了 `scripts/api/web/app.js` 构造器 `h()` 中未使用的 `html` 属性（`innerHTML` 分支），彻底将前端渲染收拢于纯 `document.createTextNode` 与属性白名单。
+7. **错误提示与操作引导自洽**：规范化了对 `.env` 基础文件账号的拦截报错文案，清晰指导用户在 `.env` 或 WebUI 中管理不同来源账号。
+
+---
+
+## [2026-11-07] - 内嵌 WebUI 控制面板：网页端账号管理 + 代理测试 + 积分持久化历史
+
+### 🚀 核心更新
+
+#### 1. WebUI 控制面板内嵌（无需再部署外部仪表盘容器）
+- **面板直接内嵌进控制 API**（`scripts/api/web/`，原生 JS 单页应用，无构建步骤、无 CDN 依赖）：浏览器打开 `http://<ip>:8890` 即可进行**全部操作**——总览启停/单账号运行、账号管理、积分历史、实时日志（SSE）、调度编辑、行为配置、会话与诊断。
+- **面板登录认证**：`POST /auth/login` 使用 `.env` 中的 `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` 签发 HMAC 签名的 HttpOnly 会话 Cookie（默认 7 天）；`API_TOKEN` Bearer 认证保持不变，旧版外部仪表盘完全兼容。Cookie 鉴权的写操作要求 `X-Requested-With` 头（CSRF 防护），登录接口内置 IP 级限流（10 次/15 分钟）。
+- `compose.yaml` 默认开启 `API_MODE=true` 并映射 `8890:3010`。
+
+#### 2. 网页端账号增删改（新增 API）
+- 新增 `POST /accounts`、`PATCH|DELETE /accounts/:index`：在面板中直接添加/编辑/删除刷积分账号，**写入 `config/accounts.env`**（原子写 + 首次写自动备份 `.bak`），下次运行生效；`GET /accounts` 每条记录带 `source`（`web`/`env`）标识来源，`.env` 手工账号在面板中只读。
+- **账号双源合并**：`.env` 与 `config/accounts.env` 按槽位块级合并（后者优先）；机器人侧 `Load.ts` 同步叠加读取 `config/accounts.env`，Docker cron 触发的运行同样能看到网页新增账号。字段校验：邮箱格式、TOTP Base32、代理协议白名单（http/https/socks4/socks5）、端口范围、BCP 47 语言码。
+
+#### 3. 每账号代理可视化配置与连通性测试
+- 新增 `POST /accounts/:index/proxy-test`：经该账号代理请求 IP 回显服务，返回**出口 IP / 国家 / 延迟**（支持 http/https/socks4/socks5；SOCKS 认证与浏览器行为一致地被拒绝；硬超时保护）。面板账号列表提供"测代理"按钮与代理徽标。
+- 复用既有"每账号固定独立代理"防封模型（浏览器 + 查询源同源出口），面板内附使用建议（住宅/ISP 静态 IP、避免多账号共 IP）。
+
+#### 4. 积分历史持久化
+- 新增 `config/points-history.jsonl`：每次运行结束自动追加运行摘要（`pm.on('exit')`），**重启不丢**（原 `/history` 仅内存 20 条）；文件超 5MB 自动轮转。
+- 新增 `GET /points/history?days=N`：返回每日聚合、分账号累计与运行明细；面板"积分历史"页提供统计卡片、每日获得柱状图（SVG、离线）与运行记录表。
+
+### 📦 其他
+- 依赖新增 `https-proxy-agent`、`socks-proxy-agent`（纯 JS，仅代理测试用）。
+- 新增测试：`scripts/api/envStore.test.js`、`scripts/api/pointsHistory.test.js`（`npm run test:api`）；`src/util/Load.ts` 改动已通过 `npm run build` 编译验证。
+
+---
+
 ## [2026-11-02] - WebUI 控制面板连通性加固、多账号热更新与中文报表增强
 
 ### 🚀 核心更新与修复

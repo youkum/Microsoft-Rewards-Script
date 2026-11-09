@@ -31,11 +31,14 @@ services:
             #MAX_SLEEP_MINUTES: "50"
             #STUCK_PROCESS_TIMEOUT_HOURS: "8"
 
-            # ── API mode ──────────────────────────────────────
-            # Set API_MODE=true to run the API server for additional control options
-            #API_MODE: 'true'
-            #API_TOKEN: '${API_TOKEN}'             # required for API mode, see example.env
-            # API write/reveal capabilities are separate opt-ins and are off by default.
+            # ── API mode + 内嵌 WebUI 控制面板 ──────────────────
+            # API_MODE=true 时容器内启动控制 API + 内嵌 WebUI（浏览器打开 http://<服务器IP>:8890）
+            # 面板登录账号在 .env 中配置：DASHBOARD_USERNAME / DASHBOARD_PASSWORD
+            API_MODE: 'true'
+            # 可选：外部工具用 API_TOKEN 走 Bearer 认证（面板用不到）
+            #API_TOKEN: '${API_TOKEN}'
+            # 面板写能力的独立开关（账号写入默认开启，其余默认关闭）
+            API_ALLOW_ACCOUNT_WRITE: 'true'
             #API_ALLOW_SCHEDULE_WRITE: 'true'
             #API_ALLOW_ENV_OVERRIDES: 'true'
             #API_ALLOW_CONFIG_REVEAL: 'true'
@@ -76,10 +79,10 @@ services:
             #CONFIG_CLAWBOT_ENABLED: 'true'
             #CONFIG_CLAWBOT_AUTHFILE: ''             # 凭证路径，默认项目根 clawbot-auth.json
 
-        # ── API mode port mapping ──────────────────────────────────────
-        # Uncomment when API_MODE=true
-        #ports:
-        #    - '3010:3010'
+        # ── 内嵌 WebUI 面板端口映射（API_MODE=true 时生效）──────────────
+        # 浏览器访问 http://<服务器IP>:8890
+        ports:
+            - '8890:3010'
 
         healthcheck:
             test: ['CMD-SHELL', 'scripts/docker/healthcheck.sh']
