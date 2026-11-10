@@ -120,6 +120,19 @@ export class EmailLogin {
             }
 
             this.bot.logger.info(this.bot.isMobile, 'LOGIN-ENTER-EMAIL', '邮箱已提交')
+            await this.bot.utils.wait(500)
+            const inlineError = await page
+                .locator('#usernameError, div[role="alert"].alert-error, div.alert-error')
+                .first()
+                .innerText({ timeout: 1000 })
+                .catch(() => '')
+            if (inlineError && inlineError.trim()) {
+                this.bot.logger.warn(
+                    this.bot.isMobile,
+                    'LOGIN-ENTER-EMAIL',
+                    `邮箱提交后页面提示: ${inlineError.trim()}`
+                )
+            }
             return 'ok'
         } catch (error) {
             this.bot.logger.error(
@@ -156,6 +169,19 @@ export class EmailLogin {
             }
 
             this.bot.logger.info(this.bot.isMobile, 'LOGIN-ENTER-PASSWORD', '密码已提交')
+            await this.bot.utils.wait(500)
+            const inlineError = await page
+                .locator('#passwordError, div[role="alert"].alert-error, div.alert-error')
+                .first()
+                .innerText({ timeout: 1000 })
+                .catch(() => '')
+            if (inlineError && inlineError.trim()) {
+                this.bot.logger.warn(
+                    this.bot.isMobile,
+                    'LOGIN-ENTER-PASSWORD',
+                    `密码提交后页面提示: ${inlineError.trim()}`
+                )
+            }
             return 'ok'
         } catch (error) {
             this.bot.logger.error(

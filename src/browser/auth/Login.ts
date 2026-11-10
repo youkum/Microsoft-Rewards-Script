@@ -55,6 +55,8 @@ export class Login {
     private readonly capturedUnknownUrls = new Set<string>()
     private signInMethodsLogged = false
     private passwordlessMethodSelected = false
+    private emailSubmittedCount = 0
+    private passwordSubmittedCount = 0
 
     private readonly selectors = {
         primaryButton:
@@ -70,7 +72,8 @@ export class Login {
         recoveryEmail: '[data-testid="proof-confirmation"], #proof-confirmation',
         emailVerificationInput: 'input#proof-confirmation-email-input, input#otc-confirmation-input',
         accountLocked: '#serviceAbuseLandingTitle, #idTd_Tile_ErrorMsg_Login',
-        errorAlert: 'div[role="alert"], #usernameError, #passwordError',
+        errorAlert:
+            'div[role="alert"], #usernameError, #passwordError, div.alert-error, #errorText, #idTd_Tile_ErrorMsg_Login, span.text-danger, div.text-danger, div[data-testid="errorAlert"], div[data-testid="usernameError"], div[data-testid="passwordError"], div[id*="Error" i]',
         passwordEntry:
             '[data-testid="passwordEntry"], input#passwordEntry, input[name="passwd"], input#i0118, input[type="password"]',
         emailEntry:
@@ -106,6 +109,8 @@ export class Login {
             this.capturedUnknownUrls.clear()
             this.signInMethodsLogged = false
             this.passwordlessMethodSelected = false
+            this.emailSubmittedCount = 0
+            this.passwordSubmittedCount = 0
             this.bot.logger.info(this.bot.isMobile, 'LOGIN', '开始登录流程')
 
             await page
@@ -210,9 +215,11 @@ export class Login {
             return 'LOGGED_IN'
         }
 
+        // 优先主动探测页面上是否存在非空可见的告警/错误容器
+        const activeAlertError = await this.getActiveAlertError(page)
+
         // Page/state selectors are checked together; page-specific routing is resolved below by priority
         const stateChecks: Array<[string, LoginState]> = [
-            [this.selectors.errorAlert, 'ERROR_ALERT'],
             [this.selectors.passwordEntry, 'PASSWORD_INPUT'],
             [this.selectors.emailEntry, 'EMAIL_INPUT'],
             [this.selectors.recoveryEmail, 'RECOVERY_EMAIL_INPUT'],
@@ -250,6 +257,10 @@ export class Login {
                     .innerText({ timeout: 200 })
                     .catch(() => '')
             ])
+
+        if (activeAlertError) {
+            results.push('ERROR_ALERT')
+        }
 
         const visibleStates = results.filter((s): s is LoginState => s !== null)
         if (visibleStates.length > 0) {
@@ -295,20 +306,48 @@ export class Login {
         }
 
         if (foundStates.includes('ERROR_ALERT')) {
-            const hasActionableInput =
-                foundStates.includes('PASSWORD_INPUT') ||
-                foundStates.includes('EMAIL_INPUT') ||
-                foundStates.includes('KMSI_PROMPT') ||
-                foundStates.includes('2FA_TOTP') ||
-                foundStates.includes('SIGN_IN_METHOD_PICKER')
+            const isCookie = this.isCookieOrTermsNotice(activeAlertError)
+            const isFatal = this.isFatalLoginError(activeAlertError)
+            const alreadySubmitted = this.emailSubmittedCount > 0 || this.passwordSubmittedCount > 0
 
-            if (hasActionableInput) {
-                this.bot.logger.debug(
+            if (isFatal) {
+                this.bot.logger.error(
                     this.bot.isMobile,
                     'DETECT-STATE',
-                    '页面同时存在可操作输入状态，暂缓 ERROR_ALERT 优先执行交互'
+                    `检测到明确的账户致命错误提示: "${activeAlertError}"`
                 )
-                foundStates = foundStates.filter(s => s !== 'ERROR_ALERT')
+                // 保持 ERROR_ALERT，确保按最高优先级处理并快速报错退出
+            } else if (alreadySubmitted) {
+                this.bot.logger.warn(
+                    this.bot.isMobile,
+                    'DETECT-STATE',
+                    `凭据已提交但页面仍存在错误提示: "${activeAlertError}"，优先处理错误`
+                )
+                // 凭据提交后的错误绝不可被输入框覆盖，否则会导致死循环
+            } else if (isCookie) {
+                this.bot.logger.info(
+                    this.bot.isMobile,
+                    'DETECT-STATE',
+                    '检测到Cookie/隐私条款提示，优先处理提示以解除页面遮挡'
+                )
+                // 保持 ERROR_ALERT，handleState 将自动点击同意/继续按钮
+            } else {
+                // 仅在尚未提交任何凭据、且告警非致命/非Cookie时，暂缓提示优先输入
+                const hasActionableInput =
+                    foundStates.includes('PASSWORD_INPUT') ||
+                    foundStates.includes('EMAIL_INPUT') ||
+                    foundStates.includes('KMSI_PROMPT') ||
+                    foundStates.includes('2FA_TOTP') ||
+                    foundStates.includes('SIGN_IN_METHOD_PICKER')
+
+                if (hasActionableInput) {
+                    this.bot.logger.debug(
+                        this.bot.isMobile,
+                        'DETECT-STATE',
+                        `尚未提交凭据且存在可操作输入，暂缓非致命提示: "${activeAlertError}"`
+                    )
+                    foundStates = foundStates.filter(s => s !== 'ERROR_ALERT')
+                }
             }
         }
 
@@ -340,6 +379,90 @@ export class Login {
 
         this.bot.logger.debug(this.bot.isMobile, 'DETECT-STATE', `返回第一个找到的状态: ${foundStates[0]}`)
         return foundStates[0] as LoginState
+    }
+
+    private async getActiveAlertError(page: Page): Promise<string> {
+        try {
+            const alertEls = page.locator(this.selectors.errorAlert)
+            const alertCount = await alertEls.count().catch(() => 0)
+            for (let i = 0; i < alertCount; i++) {
+                const el = alertEls.nth(i)
+                const isVis = await el.isVisible().catch(() => false)
+                if (!isVis) continue
+                const text = (await el.innerText().catch(() => '')).trim()
+                if (text && text.length > 0) {
+                    return text
+                }
+            }
+        } catch {}
+        return ''
+    }
+
+    private isCookieOrTermsNotice(text: string): boolean {
+        const lower = text.toLowerCase()
+        const cookieBannerPatterns = [
+            '使用可选的 cookie',
+            '可选的 cookie',
+            'we use optional cookies',
+            'optional cookies',
+            'cookie',
+            'cookies',
+            '隐私声明',
+            'privacy statement',
+            '隐私',
+            'privacy',
+            '条款',
+            'terms',
+            '声明',
+            'statement',
+            '接受',
+            'accept',
+            '同意',
+            'agree'
+        ]
+        return cookieBannerPatterns.some(p => lower.includes(p))
+    }
+
+    private isFatalLoginError(text: string): boolean {
+        const lower = text.toLowerCase()
+        const fatalPatterns = [
+            '密码不正确',
+            '密码错误',
+            'incorrect password',
+            'wrong password',
+            'invalid password',
+            '不存在',
+            "doesn't exist",
+            'does not exist',
+            '找不到',
+            'could not find',
+            "couldn't find",
+            '已锁定',
+            'locked',
+            'blocked',
+            '已被阻止',
+            '已被暂停',
+            'suspended',
+            '尝试次数过多',
+            'too many attempts',
+            '请求过多',
+            '有效',
+            'valid',
+            '保护你的账户',
+            'protect your account',
+            '验证码',
+            'captcha',
+            '无法登录',
+            'cannot sign in',
+            "can't sign in",
+            '未识别',
+            'not recognized',
+            '此用户名可能不正确',
+            'username may be incorrect',
+            '键入正确',
+            'type it correctly'
+        ]
+        return fatalPatterns.some(p => lower.includes(p))
     }
 
     private async checkSelector(page: Page, selector: string): Promise<boolean> {
@@ -489,44 +612,17 @@ export class Login {
             case 'ERROR_ALERT': {
                 // 页面上可能同时存在多个 role=alert 容器（含跳转瞬间的空 aria-live 区域），
                 // 只有携带非空文本的才是真实错误
-                const alertEls = page.locator(this.selectors.errorAlert)
-                const alertCount = await alertEls.count().catch(() => 0)
-                let errorMsg = ''
-                for (let i = 0; i < alertCount; i++) {
-                    const text = (await alertEls.nth(i).innerText().catch(() => '')).trim()
-                    if (text) {
-                        errorMsg = text
-                        break
-                    }
-                }
+                const errorMsg = await this.getActiveAlertError(page)
                 if (!errorMsg) {
                     this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '告警容器无文本，视为瞬时状态，稍后重新检测')
                     await this.bot.utils.wait(2000)
                     return true
                 }
 
-                const lowerMsg = errorMsg.toLowerCase()
+                this.bot.logger.warn(this.bot.isMobile, 'LOGIN', `捕获到页面告警/错误文本: "${errorMsg}"`)
 
                 // Cookie 同意横幅或条款提示会被误判为错误告警：尝试关闭并继续，不视为登录失败
-                const cookieBannerPatterns = [
-                    '使用可选的 cookie',
-                    '可选的 cookie',
-                    'we use optional cookies',
-                    'optional cookies',
-                    'cookie',
-                    'cookies',
-                    '隐私',
-                    'privacy',
-                    '条款',
-                    'terms',
-                    '声明',
-                    'statement',
-                    '接受',
-                    'accept',
-                    '同意',
-                    'agree'
-                ]
-                if (cookieBannerPatterns.some(p => lowerMsg.includes(p))) {
+                if (this.isCookieOrTermsNotice(errorMsg)) {
                     this.bot.logger.warn(
                         this.bot.isMobile,
                         'LOGIN',
@@ -560,27 +656,11 @@ export class Login {
                     return true
                 }
 
-                // 检查是否为致命凭据错误（密码错误、账号锁定或不存在）
-                const fatalPatterns = [
-                    '密码不正确',
-                    '密码错误',
-                    'incorrect password',
-                    'wrong password',
-                    '不存在',
-                    "doesn't exist",
-                    'does not exist',
-                    '已锁定',
-                    'locked',
-                    'blocked',
-                    '已被阻止',
-                    '已被暂停',
-                    'suspended',
-                    '尝试次数过多',
-                    'too many attempts'
-                ]
-                const isFatal = fatalPatterns.some(p => lowerMsg.includes(p))
-                if (isFatal) {
-                    this.bot.logger.error(this.bot.isMobile, 'LOGIN', `账户错误: ${errorMsg}`)
+                // 检查是否为致命凭据错误（密码错误、账号锁定或不存在）或提交后页面返回的拒绝错误
+                const isFatal = this.isFatalLoginError(errorMsg)
+                const alreadySubmitted = this.emailSubmittedCount > 0 || this.passwordSubmittedCount > 0
+                if (isFatal || alreadySubmitted) {
+                    this.bot.logger.error(this.bot.isMobile, 'LOGIN', `微软登录账户致命错误: ${errorMsg}`)
                     throw new Error(`Microsoft login error: ${errorMsg}`)
                 }
 
@@ -637,6 +717,7 @@ export class Login {
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '输入邮箱')
                 const result = await this.emailLogin.enterEmail(page, account.email)
                 if (result !== 'ok') return false
+                this.emailSubmittedCount++
                 await this.waitForIdle(page, 'after email entry')
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '邮箱输入成功')
                 return true
@@ -659,6 +740,7 @@ export class Login {
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '输入密码')
                 const result = await this.emailLogin.enterPassword(page, account.password)
                 if (result === 'error') return false
+                this.passwordSubmittedCount++
                 await this.waitForIdle(page, 'after password entry')
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '密码输入成功')
                 return true
