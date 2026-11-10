@@ -9,13 +9,21 @@ export interface PromptOptions {
 }
 
 export function canPromptForInput(): boolean {
-    return process.stdin.isTTY === true
+    return Boolean(
+        process.stdin.isTTY === true ||
+        process.stdin.readable ||
+        process.env.API_MODE === 'true' ||
+        process.env.DOCKER_CONTAINER === 'true'
+    )
 }
 
 export function promptInput(options: PromptOptions): Promise<string | null> {
     if (!canPromptForInput()) return Promise.resolve(null)
 
-    const { question, timeoutSeconds = 60, validate, transform } = options
+    const { question, timeoutSeconds = 180, validate, transform } = options
+
+    // 输出结构化标记，便于 WebUI / 控制 API 捕获并向前端展示交互卡片
+    console.log(`__PROMPT_REQUEST__:${JSON.stringify({ question, timeoutSeconds })}`)
 
     return new Promise(resolve => {
         const rl = readline.createInterface({
@@ -29,11 +37,15 @@ export function promptInput(options: PromptOptions): Promise<string | null> {
             if (resolved) return
             resolved = true
             clearTimeout(timer)
+            console.log('__PROMPT_RESOLVED__')
             rl.close()
             resolve(result)
         }
 
-        const timer = setTimeout(() => cleanup(null), timeoutSeconds * 1000)
+        const timer = setTimeout(() => {
+            console.log(`[PROMPT-TIMEOUT] 交互输入等待超时 (${timeoutSeconds}s)`)
+            cleanup(null)
+        }, timeoutSeconds * 1000)
 
         rl.question(question, answer => {
             let value = answer.trim()

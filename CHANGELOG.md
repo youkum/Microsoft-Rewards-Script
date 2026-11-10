@@ -4,6 +4,21 @@
 
 ---
 
+## [2026-11-10] - WebUI 交互式控制台、安全验证码/邮箱实时交互与行为配置/调度 API 开放
+
+### 💻 交互式控制台与安全验证交互
+1. **进程标准输入管道打通 (`stdio: pipe`)**：重构 `processManager.js` 中的子进程派发模式，将子进程的输入流 `stdin` 由静默丢弃模式改为管道接入模式（`stdio: ['pipe', 'pipe', 'pipe']`），支持通过 WebUI 将用户输入无损传输至正在执行登录与任务的机器人后台子进程。
+2. **结构化交互信号协议与超时延长**：在 `LoginUtils.ts`、`GetACodeLogin.ts`、`RecoveryEmailLogin.ts`、`Totp2FALogin.ts` 等认证模块中引入结构化控制台标记 `__PROMPT_REQUEST__:` 与 `__PROMPT_RESOLVED__`；优化 `canPromptForInput()` 判定逻辑，在 Docker/API 模式下全面解禁交互输入（等待时长由 60 秒延长至 180 秒），支持从命令行与 Web 页面双向响应。
+3. **Web 端交互式验证卡片与控制台输入条**：
+   - 顶部实时悬浮发光交互卡片：当后台检测到需要输入验证码、安全验证邮箱或 TOTP 时，网页端通过 SSE `status` 实时弹出高亮验证提示框，支持一键填入并即时回传。
+   - 实时日志底部集成终端输入栏：在「实时日志」底部增加全功能终端输入条，方便运维排查与手动向子进程发送指令。
+4. **中文登录方法识别增强**：在 `Login.ts` 的 `classifySignInMethod` 中增加对中文提示语（如“将代码发送到 <email>”）的解析支持，实现与官方微软登录界面的本地化无缝适配。
+
+### ⚙️ 行为控制与调度写权限全面解禁
+1. **启用行为配置与调度写入 API**：在 `compose.yaml` 与 `compose.override.yaml` 中将 `API_ALLOW_CONFIG_WRITE`、`API_ALLOW_CONFIG_REVEAL`、`API_ALLOW_SCHEDULE_WRITE` 设为 `true`，解除 WebUI 中「行为配置」和「运行调度」的编辑锁定状态，用户可直接在浏览器端自定义任务规则与 Cron 调度。
+
+---
+
 ## [2026-11-10] - 修复登录状态机死锁与错误提示吞没，支持快速熔断与致命错误提取
 
 ### 🛡️ 登录状态机与错误处理优化

@@ -9,7 +9,7 @@ export class CodeLogin {
         'input#proof-confirmation-email-input',
         '[data-testid="proof-confirmation"]'
     ] as const
-    private readonly maxManualSeconds = 60
+    private readonly maxManualSeconds = 180
     private readonly maxManualAttempts = 5
 
     constructor(private bot: MicrosoftRewardsBot) {}
@@ -95,11 +95,11 @@ export class CodeLogin {
         }
     }
 
-    async handle(page: Page): Promise<void> {
+    async handle(page: Page, preconfiguredEmail?: string): Promise<void> {
         try {
             this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', '请求代码登录身份验证')
 
-            if (!canPromptForInput()) {
+            if (!canPromptForInput() && !preconfiguredEmail) {
                 throw new Error('Email-code authentication requires interactive stdin; unavailable in background mode')
             }
 
@@ -128,69 +128,97 @@ export class CodeLogin {
                 )
 
                 let emailVerified = false
-                for (let attempt = 1; attempt <= this.maxManualAttempts; attempt++) {
-                    const email = await promptInput({
-                        question: maskedHint
-                            ? `Enter the full email address for "${maskedHint}" to send the code to (waiting ${this.maxManualSeconds}s): `
-                            : `Enter the email address to send the code to (waiting ${this.maxManualSeconds}s): `,
-                        timeoutSeconds: this.maxManualSeconds,
-                        validate: value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
-                    })
 
-                    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-                        this.bot.logger.warn(
-                            this.bot.isMobile,
-                            'LOGIN-CODE',
-                            `无效或缺少邮箱 (尝试 ${attempt}/${this.maxManualAttempts}) | 输入长度=${email?.length}`
-                        )
-
-                        if (attempt === this.maxManualAttempts) {
-                            throw new Error('Manual email input failed or timed out')
+                // 若配置中已指定恢复邮箱且有效，优先尝试
+                if (preconfiguredEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(preconfiguredEmail)) {
+                    this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', `尝试使用已配置的安全邮箱: ${preconfiguredEmail}`)
+                    const prefilled = await this.fillEmail(page, preconfiguredEmail)
+                    if (prefilled) {
+                        await this.bot.utils.wait(500)
+                        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
+                        const emailError = await getErrorMessage(page)
+                        if (!emailError) {
+                            this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', '已配置邮箱已接受，验证代码已发送')
+                            emailVerified = true
+                        } else {
+                            this.bot.logger.warn(this.bot.isMobile, 'LOGIN-CODE', `已配置邮箱未被接受: ${emailError}，转为用户交互输入`)
+                            const inputToClear = await this.findEmailVerificationInput(page)
+                            if (inputToClear) {
+                                await inputToClear.input.click()
+                                await page.keyboard.press('Control+A')
+                                await page.keyboard.press('Backspace')
+                            }
                         }
-                        continue
                     }
+                }
 
-                    const filled = await this.fillEmail(page, email)
-                    if (!filled) {
-                        this.bot.logger.error(
-                            this.bot.isMobile,
-                            'LOGIN-CODE',
-                            `无法填写邮箱输入 (尝试 ${attempt}/${this.maxManualAttempts})`
-                        )
+                if (!emailVerified) {
+                    for (let attempt = 1; attempt <= this.maxManualAttempts; attempt++) {
+                        const emailPrompt = maskedHint
+                            ? `请输入用于接收验证码的完整安全邮箱（提示: ${maskedHint}）:`
+                            : `请输入用于接收验证码的完整安全邮箱地址:`
 
-                        if (attempt === this.maxManualAttempts) {
-                            throw new Error('Email verification input not found')
+                        const email = await promptInput({
+                            question: emailPrompt,
+                            timeoutSeconds: this.maxManualSeconds,
+                            validate: value => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
+                        })
+
+                        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                            this.bot.logger.warn(
+                                this.bot.isMobile,
+                                'LOGIN-CODE',
+                                `无效或缺少邮箱 (尝试 ${attempt}/${this.maxManualAttempts}) | 输入长度=${email?.length}`
+                            )
+
+                            if (attempt === this.maxManualAttempts) {
+                                throw new Error('Manual email input failed or timed out')
+                            }
+                            continue
                         }
-                        continue
+
+                        const filled = await this.fillEmail(page, email)
+                        if (!filled) {
+                            this.bot.logger.error(
+                                this.bot.isMobile,
+                                'LOGIN-CODE',
+                                `无法填写邮箱输入 (尝试 ${attempt}/${this.maxManualAttempts})`
+                            )
+
+                            if (attempt === this.maxManualAttempts) {
+                                throw new Error('Email verification input not found')
+                            }
+                            continue
+                        }
+
+                        await this.bot.utils.wait(500)
+                        await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
+
+                        const emailError = await getErrorMessage(page)
+                        if (emailError) {
+                            this.bot.logger.warn(
+                                this.bot.isMobile,
+                                'LOGIN-CODE',
+                                `邮箱被拒绝: ${emailError} (尝试 ${attempt}/${this.maxManualAttempts})`
+                            )
+
+                            if (attempt === this.maxManualAttempts) {
+                                throw new Error(`Maximum email attempts reached: ${emailError}`)
+                            }
+
+                            const inputToClear = await this.findEmailVerificationInput(page)
+                            if (inputToClear) {
+                                await inputToClear.input.click()
+                                await page.keyboard.press('Control+A')
+                                await page.keyboard.press('Backspace')
+                            }
+                            continue
+                        }
+
+                        this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', '邮箱已接受，验证代码已发送')
+                        emailVerified = true
+                        break
                     }
-
-                    await this.bot.utils.wait(500)
-                    await page.waitForLoadState('networkidle', { timeout: 5000 }).catch(() => {})
-
-                    const emailError = await getErrorMessage(page)
-                    if (emailError) {
-                        this.bot.logger.warn(
-                            this.bot.isMobile,
-                            'LOGIN-CODE',
-                            `邮箱被拒绝: ${emailError} (尝试 ${attempt}/${this.maxManualAttempts})`
-                        )
-
-                        if (attempt === this.maxManualAttempts) {
-                            throw new Error(`Maximum email attempts reached: ${emailError}`)
-                        }
-
-                        const inputToClear = await this.findEmailVerificationInput(page)
-                        if (inputToClear) {
-                            await inputToClear.input.click()
-                            await page.keyboard.press('Control+A')
-                            await page.keyboard.press('Backspace')
-                        }
-                        continue
-                    }
-
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', '邮箱已接受，验证代码已发送')
-                    emailVerified = true
-                    break
                 }
 
                 if (!emailVerified) {
@@ -202,7 +230,7 @@ export class CodeLogin {
 
             for (let attempt = 1; attempt <= this.maxManualAttempts; attempt++) {
                 const code = await promptInput({
-                    question: `Enter the 6-digit code (waiting ${this.maxManualSeconds}s): `,
+                    question: `请输入发送到安全邮箱的 6 位数字验证码（请在 3 分钟内输入）:`,
                     timeoutSeconds: this.maxManualSeconds,
                     validate: code => /^\d{6}$/.test(code)
                 })

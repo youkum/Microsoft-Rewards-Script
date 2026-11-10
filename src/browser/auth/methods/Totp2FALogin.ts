@@ -8,7 +8,7 @@ export class TotpLogin {
         'form[name="OneTimeCodeViewForm"] input[type="text"], input#floatingLabelInput5'
     private readonly secondairyInputSelector = 'input[id="otc-confirmation-input"], input[name="otc"]'
     private readonly submitButtonSelector = 'button[type="submit"]'
-    private readonly maxManualSeconds = 60
+    private readonly maxManualSeconds = 180
     private readonly maxManualAttempts = 5
 
     constructor(private bot: MicrosoftRewardsBot) {}
@@ -86,7 +86,7 @@ export class TotpLogin {
 
             for (let attempt = 1; attempt <= this.maxManualAttempts; attempt++) {
                 const code = await promptInput({
-                    question: `Enter the 6-digit TOTP code (waiting ${this.maxManualSeconds}s): `,
+                    question: `请输入验证器应用中生成的 6 位动态验证码: `,
                     timeoutSeconds: this.maxManualSeconds,
                     validate: code => /^\d{6}$/.test(code)
                 })

@@ -541,18 +541,33 @@ export class Login {
 
     private classifySignInMethod(option: SignInMethodOption): SignInMethodType {
         const signature = option.signature
+        const label = option.label.toLowerCase()
 
-        // Sign in another way - classify method tiles from structural signatures, not translated labels
-        if (signature.includes('m5.25 4h13.5a3.25') || signature.includes('picker_verify_email')) return 'EMAIL'
-        if (signature.includes('m11.78 10.22a.75')) return 'PASSWORD'
+        // Sign in another way - classify method tiles from structural signatures AND translated labels
+        if (
+            signature.includes('m5.25 4h13.5a3.25') ||
+            signature.includes('picker_verify_email') ||
+            signature.includes('email') ||
+            /email|mail|邮箱|将代码发送到|发送代码|send.*code/i.test(label)
+        ) {
+            return 'EMAIL'
+        }
+        if (
+            signature.includes('m11.78 10.22a.75') ||
+            signature.includes('password') ||
+            /password|密码/i.test(label)
+        ) {
+            return 'PASSWORD'
+        }
         // Known passkey/security-key SVG signature keeps it out of the Authenticator fallback
-        if (/picker_fido|passkey|fido|m18 16\.66a3\.51/.test(signature)) return 'PASSKEY'
-        if (/phone[\s_-]*app[\s_-]*otp|\btotp\b/.test(signature)) return 'TOTP'
+        if (/picker_fido|passkey|fido|m18 16\.66a3\.51/i.test(signature) || /passkey|通行密钥/i.test(label)) return 'PASSKEY'
+        if (/phone[\s_-]*app[\s_-]*otp|\btotp\b/i.test(signature) || /totp|身份验证器应用中的代码|动态密码/i.test(label)) return 'TOTP'
         // Known Remote NGC/mobile-app SVG signature identifies Microsoft Authenticator language-independently
         if (
-            /remote[\s_-]*ngc|picker_remote_ngc|phone[\s_-]*app[\s_-]*notification|push[\s_-]*notification|m15\.75 2c16\.99 2 18 3/.test(
+            /remote[\s_-]*ngc|picker_remote_ngc|phone[\s_-]*app[\s_-]*notification|push[\s_-]*notification|m15\.75 2c16\.99 2 18 3/i.test(
                 signature
-            )
+            ) ||
+            /authenticator|在我的 microsoft authenticator|应用中批准/i.test(label)
         ) {
             return 'AUTHENTICATOR'
         }
@@ -861,7 +876,7 @@ export class Login {
                     }
 
                     await this.waitForIdle(page, 'after email method selection')
-                    await this.codeLogin.handle(page)
+                    await this.codeLogin.handle(page, account?.recoveryEmail)
                     return true
                 }
 
@@ -900,7 +915,7 @@ export class Login {
                     }
 
                     this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到邮箱验证输入')
-                    await this.codeLogin.handle(page)
+                    await this.codeLogin.handle(page, account?.recoveryEmail)
                     return true
                 }
 
@@ -943,7 +958,7 @@ export class Login {
 
                 if (canPromptForInput()) {
                     this.bot.logger.info(this.bot.isMobile, 'LOGIN', '回退到交互式邮箱验证')
-                    await this.codeLogin.handle(page)
+                    await this.codeLogin.handle(page, account?.recoveryEmail)
                     return true
                 }
 

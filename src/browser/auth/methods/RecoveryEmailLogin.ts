@@ -4,7 +4,7 @@ import { canPromptForInput, getErrorMessage, promptInput } from './LoginUtils'
 
 export class RecoveryLogin {
     private readonly textInputSelector = '[data-testid="proof-confirmation"]'
-    private readonly maxManualSeconds = 60
+    private readonly maxManualSeconds = 180
     private readonly maxManualAttempts = 5
 
     constructor(private bot: MicrosoftRewardsBot) {}
@@ -91,7 +91,7 @@ export class RecoveryLogin {
                 )
 
                 const email = await promptInput({
-                    question: `Recovery email (waiting ${this.maxManualSeconds}s): `,
+                    question: `请输入辅助安全邮箱完整地址以完成微软安全核验: `,
                     timeoutSeconds: this.maxManualSeconds,
                     validate: email => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
                 })

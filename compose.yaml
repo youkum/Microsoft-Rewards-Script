@@ -37,12 +37,12 @@ services:
             API_MODE: 'true'
             # 可选：外部工具用 API_TOKEN 走 Bearer 认证（面板用不到）
             #API_TOKEN: '${API_TOKEN}'
-            # 面板写能力的独立开关（账号写入默认开启，其余默认关闭）
+            # 面板写能力的独立开关（已开启账号、行为配置与调度写权限）
             API_ALLOW_ACCOUNT_WRITE: 'true'
-            #API_ALLOW_SCHEDULE_WRITE: 'true'
+            API_ALLOW_CONFIG_WRITE: 'true'
+            API_ALLOW_CONFIG_REVEAL: 'true'
+            API_ALLOW_SCHEDULE_WRITE: 'true'
             #API_ALLOW_ENV_OVERRIDES: 'true'
-            #API_ALLOW_CONFIG_REVEAL: 'true'
-            #API_ALLOW_CONFIG_WRITE: 'true'
 
             #  ── Configuration ──────────────────────────────────────
             # Uncomment to override defaults, a full list of configuration options are in the README.

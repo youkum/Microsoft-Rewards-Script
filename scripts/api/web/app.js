@@ -122,10 +122,17 @@
         state.es = es
         es.onopen = () => { state.sseReady = true; updateSseBadge() }
         es.onerror = () => { state.sseReady = false; updateSseBadge() }
-        es.addEventListener('status', event => {
-            try { state.currentRun = JSON.parse(event.data) } catch { /* ignore */ }
+        const handleStatus = event => {
+            try {
+                const data = JSON.parse(event.data)
+                state.currentRun = data
+                state.prompt = data.prompt || null
+                renderPromptBanner()
+            } catch { /* ignore */ }
             if (location.hash.startsWith('#/dashboard') || location.hash === '') refreshDashboard()
-        })
+        }
+        es.addEventListener('status', handleStatus)
+        es.addEventListener('hello', handleStatus)
         es.addEventListener('log', event => {
             try {
                 const entry = JSON.parse(event.data)
@@ -153,6 +160,73 @@
         ['#/tools', '🧰 会话与诊断']
     ]
 
+    function updateConsolePlaceholder() {
+        const inp = document.querySelector('#console-input-form input')
+        if (inp) {
+            inp.placeholder = state.prompt
+                ? `【等待验证输入】${state.prompt.question}（输入后按 Enter 发送）`
+                : '向运行中的脚本控制台输入内容(验证码、安全邮箱等)，按 Enter 发送…'
+        }
+    }
+
+    function renderPromptBanner() {
+        updateConsolePlaceholder()
+        const slot = document.getElementById('global-prompt-slot')
+        if (!slot) return
+        slot.innerHTML = ''
+        const prompt = state.prompt
+        if (!prompt) return
+
+        const card = h('div', { class: 'prompt-banner-card' },
+            h('div', { class: 'prompt-banner-header' },
+                h('div', { class: 'prompt-banner-title' },
+                    h('span', { class: 'prompt-pulse' }, '🔐'),
+                    h('strong', {}, '登录安全验证交互请求'),
+                    h('span', { class: 'badge yellow', style: { marginLeft: '8px' } }, '等待人工交互输入')
+                )
+            ),
+            h('div', { class: 'prompt-banner-question' }, prompt.question),
+            h('form', {
+                class: 'prompt-banner-form',
+                onsubmit: async event => {
+                    event.preventDefault()
+                    const form = event.target
+                    const inputEl = form.querySelector('input[name="input"]')
+                    const btn = form.querySelector('button')
+                    const val = inputEl ? inputEl.value.trim() : ''
+                    if (!val) {
+                        toast('请输入有效内容后再提交', 'warn')
+                        return
+                    }
+                    btn.disabled = true
+                    btn.textContent = '正在提交…'
+                    try {
+                        await api('/input', { method: 'POST', body: { input: val } })
+                        toast('验证信息已成功提交至机器人进程！', 'ok')
+                        state.prompt = null
+                        slot.innerHTML = ''
+                        updateConsolePlaceholder()
+                    } catch (err) {
+                        toast(`提交失败: ${err.message}`, 'error')
+                        btn.disabled = false
+                        btn.textContent = '提交输入'
+                    }
+                }
+            },
+                h('input', {
+                    type: 'text',
+                    name: 'input',
+                    class: 'prompt-banner-input',
+                    placeholder: '请输入用于接收验证码的安全邮箱或 6 位验证码…',
+                    autofocus: true,
+                    autocomplete: 'off'
+                }),
+                h('button', { type: 'submit', class: 'btn primary' }, '提交输入')
+            )
+        )
+        slot.append(card)
+    }
+
     function renderApp() {
         connectSse()
         if (!location.hash) location.hash = '#/dashboard'
@@ -169,7 +243,10 @@
                         h('div', { style: { marginTop: '8px' } },
                             h('a', { href: '#', onclick: onLogout }, '退出登录')))
                 ),
-                h('main', { class: 'main', id: 'main' })
+                h('div', { style: { flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, height: '100vh', overflowY: 'auto' } },
+                    h('div', { id: 'global-prompt-slot', style: { padding: '16px 24px 0' } }),
+                    h('main', { class: 'main', id: 'main' })
+                )
             )
         )
         window.onhashchange = route
@@ -199,6 +276,7 @@
 
     function route() {
         setActiveNav()
+        renderPromptBanner()
         if (state.dashTimer) { clearInterval(state.dashTimer); state.dashTimer = null }
         const main = document.getElementById('main')
         if (!main) return
@@ -615,7 +693,45 @@
                     [['all', '全部级别'], ['debug', 'DEBUG+'], ['info', 'INFO+'], ['warn', 'WARN+'], ['error', '仅 ERROR']].map(([value, label]) => h('option', { value }, label))),
                 h('label', { class: 'check' }, h('input', { type: 'checkbox', checked: state.logAutoScroll, onchange: event => { state.logAutoScroll = event.target.checked } }), '自动滚动'),
                 h('button', { class: 'btn small', onclick: () => { state.logs = []; redrawLogs() } }, '清空显示')),
-            h('div', { class: 'log-view', id: 'log-view' }))
+            h('div', { class: 'log-view', id: 'log-view' }),
+            h('form', {
+                class: 'console-input-bar',
+                id: 'console-input-form',
+                onsubmit: async event => {
+                    event.preventDefault()
+                    const form = event.target
+                    const inputEl = form.querySelector('input')
+                    const btn = form.querySelector('button')
+                    const val = inputEl ? inputEl.value.trim() : ''
+                    if (!val) return
+                    btn.disabled = true
+                    try {
+                        await api('/input', { method: 'POST', body: { input: val } })
+                        toast('已发送输入至脚本控制台', 'success')
+                        inputEl.value = ''
+                        if (state.prompt) {
+                            state.prompt = null
+                            renderPromptBanner()
+                        }
+                    } catch (err) {
+                        toast(`发送失败: ${err.message}`, 'error')
+                    } finally {
+                        btn.disabled = false
+                        inputEl.focus()
+                    }
+                }
+            },
+                h('span', { class: 'console-prompt-sym' }, '❯'),
+                h('input', {
+                    type: 'text',
+                    placeholder: state.prompt
+                        ? `【等待验证输入】${state.prompt.question}（输入后按 Enter 发送）`
+                        : '向运行中的脚本控制台输入内容(验证码、安全邮箱等)，按 Enter 发送…',
+                    autocomplete: 'off'
+                }),
+                h('button', { type: 'submit', class: 'btn small primary' }, '发送')
+            )
+        )
         // 回放最近日志
         try {
             const data = await api('/logs?limit=300')

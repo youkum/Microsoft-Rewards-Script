@@ -526,6 +526,8 @@ const requestHandler = async (req, res) => {
                     'POST /start',
                     'POST /stop',
                     'POST /restart',
+                    'POST /input',
+                    'GET /prompt',
                     'POST /shutdown',
                     'DELETE /sessions/:email',
                     'PUT|PATCH /config',
@@ -1003,6 +1005,28 @@ const requestHandler = async (req, res) => {
                 if (err.code === 'BAD_REQUEST') return sendJson(res, 400, { error: err.message, code: err.code })
                 return sendJson(res, 500, { error: err.message })
             }
+        }
+
+        // process stdin interactive input
+        if (method === 'POST' && pathname === '/input') {
+            const body = await readJsonObject(req)
+            if (typeof body.input !== 'string') {
+                return sendJson(res, 400, { error: '`input` must be a string.', code: 'BAD_REQUEST' })
+            }
+            try {
+                const result = pm.sendInput(body.input)
+                return sendJson(res, 200, result)
+            } catch (err) {
+                if (err.code === 'NO_STDIN') {
+                    return sendJson(res, 409, { error: err.message, code: err.code })
+                }
+                return sendJson(res, 500, { error: err.message })
+            }
+        }
+
+        // get current active prompt
+        if (method === 'GET' && pathname === '/prompt') {
+            return sendJson(res, 200, { prompt: pm.currentPrompt })
         }
 
         // conf

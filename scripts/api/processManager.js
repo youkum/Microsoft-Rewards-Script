@@ -54,6 +54,8 @@ export class ProcessManager extends EventEmitter {
         this._stderrBuf = ''
         this._killTimer = null
         this._finalized = false
+        this.currentPrompt = null
+        this._promptTimer = null
     }
 
     start(overrides = {}) {
@@ -82,7 +84,7 @@ export class ProcessManager extends EventEmitter {
             child = spawn(this.command, args, {
                 cwd: this.cwd,
                 env,
-                stdio: ['ignore', 'pipe', 'pipe'],
+                stdio: ['pipe', 'pipe', 'pipe'],
                 detached: !IS_WIN, // own process group on POSIX so we can signal the whole tree
                 windowsHide: true
             })
@@ -174,8 +176,24 @@ export class ProcessManager extends EventEmitter {
             logCount: this.logBuffer.length,
             logBufferSize: this.logBufferSize,
             latestLogId: this.logSeq,
-            run: summarizeRunState(this.runState)
+            run: summarizeRunState(this.runState),
+            prompt: this.currentPrompt
         }
+    }
+
+    sendInput(text) {
+        if (!this.child || !this.child.stdin || this.child.stdin.destroyed) {
+            const err = new Error('No running process or stdin stream is not writable.')
+            err.code = 'NO_STDIN'
+            throw err
+        }
+        const clean = text.endsWith('\n') ? text : `${text}\n`
+        this.child.stdin.write(clean)
+        this._controllerLog('info', `已通过控制台交互提交输入 (长度: ${text.trim().length})`)
+        if (this._promptTimer) clearTimeout(this._promptTimer)
+        this.currentPrompt = null
+        this._emitStatus('prompt-answered')
+        return { ok: true }
     }
 
     getPoints() {
@@ -307,6 +325,36 @@ export class ProcessManager extends EventEmitter {
 
     _handleLine(source, rawLine) {
         if (rawLine === '') return
+
+        if (rawLine.startsWith('__PROMPT_REQUEST__:')) {
+            try {
+                const data = JSON.parse(rawLine.slice('__PROMPT_REQUEST__:'.length))
+                this.currentPrompt = {
+                    id: Date.now(),
+                    question: data.question || '请输入验证信息',
+                    timeoutSeconds: data.timeoutSeconds || 180,
+                    requestedAt: new Date().toISOString()
+                }
+                if (this._promptTimer) clearTimeout(this._promptTimer)
+                this._promptTimer = setTimeout(() => {
+                    this.currentPrompt = null
+                    this._emitStatus('prompt-timeout')
+                }, (this.currentPrompt.timeoutSeconds + 2) * 1000)
+                if (typeof this._promptTimer.unref === 'function') this._promptTimer.unref()
+
+                this._controllerLog('warn', `[交互输入请求] ${this.currentPrompt.question}`)
+                this._emitStatus('prompt-requested')
+                return
+            } catch {}
+        }
+
+        if (rawLine.startsWith('__PROMPT_RESOLVED__')) {
+            if (this._promptTimer) clearTimeout(this._promptTimer)
+            this.currentPrompt = null
+            this._emitStatus('prompt-resolved')
+            return
+        }
+
         const entry = parseLogLine(rawLine, source)
         this._appendLog(entry)
         const milestone = applyLogToRunState(this.runState, entry)
@@ -362,6 +410,11 @@ export class ProcessManager extends EventEmitter {
             clearTimeout(this._killTimer)
             this._killTimer = null
         }
+        if (this._promptTimer) {
+            clearTimeout(this._promptTimer)
+            this._promptTimer = null
+        }
+        this.currentPrompt = null
 
         this._flushPartial()
 
