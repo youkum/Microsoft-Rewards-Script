@@ -22,6 +22,14 @@ if [ "${API_MODE:-false}" != "true" ]; then
   fi
 fi
 
+# Load WebUI-managed accounts if present
+if [ -f "$SCRIPT_DIR/config/accounts.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/config/accounts.env" || true
+  set +a
+fi
+
 mapfile -t account_indexes < <(
   compgen -e | sed -n 's/^ACCOUNT_\([1-9][0-9]*\)_EMAIL$/\1/p' | sort -n -u
 )
