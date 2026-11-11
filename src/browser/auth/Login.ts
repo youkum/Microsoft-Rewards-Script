@@ -151,8 +151,16 @@ export class Login {
                         this.bot.logger.warn(
                             this.bot.isMobile,
                             'LOGIN',
-                            `在状态 "${state}" 停滞4次循环，刷新页面`
+                            `在状态 "${state}" 停滞4次循环`
                         )
+                        if (state === 'KMSI_PROMPT') {
+                            this.bot.logger.info(this.bot.isMobile, 'LOGIN', 'KMSI停滞，尝试点击否/跳过或强制提交表单以推进流程')
+                            await page.locator('input#idBtn_Back, button:has-text("否"), button:has-text("No"), button[data-testid="secondaryButton"]').first().click().catch(() => {})
+                            await page.evaluate(() => (document.querySelector('form') as HTMLFormElement)?.submit()).catch(() => {})
+                            await this.bot.utils.wait(3000)
+                            sameStateCount = 0
+                            continue
+                        }
                         await page.reload({ waitUntil: 'domcontentloaded' })
                         await this.bot.utils.wait(3000)
                         sameStateCount = 0
@@ -258,7 +266,7 @@ export class Login {
                     .catch(() => '')
             ])
 
-        if (activeAlertError) {
+        if (activeAlertError && !this.isInstructionalNotice(activeAlertError)) {
             results.push('ERROR_ALERT')
         }
 
@@ -308,22 +316,18 @@ export class Login {
         if (foundStates.includes('ERROR_ALERT')) {
             const isCookie = this.isCookieOrTermsNotice(activeAlertError)
             const isFatal = this.isFatalLoginError(activeAlertError)
-            const alreadySubmitted = this.emailSubmittedCount > 0 || this.passwordSubmittedCount > 0
+            const isInstruction = this.isInstructionalNotice(activeAlertError)
 
-            if (isFatal) {
+            if (isInstruction) {
+                // 仅为输入引导提示（如“输入 Microsoft 帐户的密码”），绝非错误
+                foundStates = foundStates.filter(s => s !== 'ERROR_ALERT')
+            } else if (isFatal) {
                 this.bot.logger.error(
                     this.bot.isMobile,
                     'DETECT-STATE',
                     `检测到明确的账户致命错误提示: "${activeAlertError}"`
                 )
                 // 保持 ERROR_ALERT，确保按最高优先级处理并快速报错退出
-            } else if (alreadySubmitted) {
-                this.bot.logger.warn(
-                    this.bot.isMobile,
-                    'DETECT-STATE',
-                    `凭据已提交但页面仍存在错误提示: "${activeAlertError}"，优先处理错误`
-                )
-                // 凭据提交后的错误绝不可被输入框覆盖，否则会导致死循环
             } else if (isCookie) {
                 this.bot.logger.info(
                     this.bot.isMobile,
@@ -332,19 +336,19 @@ export class Login {
                 )
                 // 保持 ERROR_ALERT，handleState 将自动点击同意/继续按钮
             } else {
-                // 仅在尚未提交任何凭据、且告警非致命/非Cookie时，暂缓提示优先输入
                 const hasActionableInput =
                     foundStates.includes('PASSWORD_INPUT') ||
                     foundStates.includes('EMAIL_INPUT') ||
                     foundStates.includes('KMSI_PROMPT') ||
                     foundStates.includes('2FA_TOTP') ||
-                    foundStates.includes('SIGN_IN_METHOD_PICKER')
+                    foundStates.includes('SIGN_IN_METHOD_PICKER') ||
+                    foundStates.includes('OTP_CODE_ENTRY')
 
                 if (hasActionableInput) {
                     this.bot.logger.debug(
                         this.bot.isMobile,
                         'DETECT-STATE',
-                        `尚未提交凭据且存在可操作输入，暂缓非致命提示: "${activeAlertError}"`
+                        `存在可操作输入，暂缓非致命提示: "${activeAlertError}"`
                     )
                     foundStates = foundStates.filter(s => s !== 'ERROR_ALERT')
                 }
@@ -396,6 +400,24 @@ export class Login {
             }
         } catch {}
         return ''
+    }
+
+    private isInstructionalNotice(text: string): boolean {
+        const lower = text.toLowerCase()
+        const instructionalPatterns = [
+            '输入 microsoft 帐户的密码',
+            '输入 microsoft 账户的密码',
+            '输入你的密码',
+            '输入密码',
+            'enter password',
+            'enter the password',
+            'enter your password',
+            '输入代码',
+            'enter code',
+            '输入安全代码',
+            'enter the code'
+        ]
+        return instructionalPatterns.some(p => lower.includes(p))
     }
 
     private isCookieOrTermsNotice(text: string): boolean {
@@ -671,10 +693,21 @@ export class Login {
                     return true
                 }
 
-                // 检查是否为致命凭据错误（密码错误、账号锁定或不存在）或提交后页面返回的拒绝错误
+                // 引导提示（如“输入 Microsoft 帐户的密码”），平滑等待输入
+                const isInstruction = this.isInstructionalNotice(errorMsg)
+                if (isInstruction) {
+                    this.bot.logger.info(
+                        this.bot.isMobile,
+                        'LOGIN',
+                        `捕获到输入引导文案: "${errorMsg.slice(0, 60)}"，平滑等待输入`
+                    )
+                    await this.bot.utils.wait(1000)
+                    return true
+                }
+
+                // 检查是否为致命凭据错误（密码错误、账号锁定或不存在）
                 const isFatal = this.isFatalLoginError(errorMsg)
-                const alreadySubmitted = this.emailSubmittedCount > 0 || this.passwordSubmittedCount > 0
-                if (isFatal || alreadySubmitted) {
+                if (isFatal) {
                     this.bot.logger.error(this.bot.isMobile, 'LOGIN', `微软登录账户致命错误: ${errorMsg}`)
                     throw new Error(`Microsoft login error: ${errorMsg}`)
                 }
@@ -1007,19 +1040,38 @@ export class Login {
                 if (await dontShowAgain.isVisible({ timeout: 500 }).catch(() => false)) {
                     await dontShowAgain.check().catch(() => {})
                 }
-                let clicked = await this.bot.browser.utils.ghostClick(page, this.selectors.primaryButton).catch(() => false)
-                if (!clicked) {
-                    const yesButton = page
-                        .locator('input#idSIButton9, button#idSIButton9, button[type="submit"], button:has-text("是"), button:has-text("Yes")')
-                        .first()
-                    if (await yesButton.isVisible({ timeout: 1000 }).catch(() => false)) {
-                        await yesButton.click().catch(() => {})
-                        clicked = true
-                    }
+                let clicked = false
+                const kmsiButtons = [
+                    'input#idSIButton9',
+                    'button#idSIButton9',
+                    'button[data-testid="primaryButton"]',
+                    'input[type="submit"]',
+                    'button[type="submit"]',
+                    'button:has-text("是")',
+                    'button:has-text("Yes")',
+                    '#acceptButton',
+                    'input#idBtn_Back',
+                    'button:has-text("否")',
+                    'button:has-text("No")'
+                ]
+                for (const sel of kmsiButtons) {
+                    try {
+                        const el = page.locator(sel).first()
+                        if (await el.isVisible({ timeout: 300 }).catch(() => false)) {
+                            await el.click({ timeout: 2000 })
+                            clicked = true
+                            this.bot.logger.info(this.bot.isMobile, 'LOGIN', `已点击 KMSI 按钮: ${sel}`)
+                            break
+                        }
+                    } catch {}
                 }
                 if (!clicked) {
-                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '未能明确点击KMSI按钮，尝试回车或继续')
+                    clicked = await this.bot.browser.utils.ghostClick(page, this.selectors.primaryButton).catch(() => false)
+                }
+                if (!clicked) {
+                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '未能明确点击KMSI按钮，尝试回车或表单提交')
                     await page.keyboard.press('Enter').catch(() => {})
+                    await page.evaluate(() => (document.querySelector('form') as HTMLFormElement)?.submit()).catch(() => {})
                 }
                 await this.waitForIdle(page, 'after KMSI acceptance')
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', 'KMSI提示已处理')

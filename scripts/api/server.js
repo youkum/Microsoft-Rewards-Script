@@ -706,6 +706,10 @@ const requestHandler = async (req, res) => {
                     // Empty password field on edit = keep existing password.
                     delete flat.password
                 }
+                if ('totpSecret' in flat && flat.totpSecret === '') {
+                    // Empty totpSecret field on edit = keep existing totpSecret.
+                    delete flat.totpSecret
+                }
                 storeUpdateAccount(projectRoot, slot, flat)
                 pm.note('info', `ACCOUNT_${slot} (${existing.email}) updated via WebUI.`)
                 return sendJson(res, 200, {

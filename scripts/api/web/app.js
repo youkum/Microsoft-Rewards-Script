@@ -533,7 +533,7 @@
             h('label', { class: 'f' }, '邮箱 *', h('input', { type: 'text', name: 'email', required: true, value: account?.email ?? '' })),
             h('div', { class: 'form-row' },
                 h('label', { class: 'f' }, '密码', h('input', { type: 'password', name: 'password', autocomplete: 'new-password', placeholder: isEdit ? '留空则保持不变' : '无密码账号可留空' })),
-                h('label', { class: 'f' }, '2FA 密钥(TOTP Base32)', h('input', { type: 'text', name: 'totp', placeholder: '如 JBSWY3DPEHPK3PXP', value: '' }))),
+                h('label', { class: 'f' }, '2FA 密钥(TOTP Base32)', h('input', { type: 'text', name: 'totp', placeholder: isEdit && account?.hasTotp ? '已配置（留空保持不变）' : '如 JBSWY3DPEHPK3PXP', value: '' }))),
             h('div', { class: 'form-row' },
                 h('label', { class: 'f' }, '语言(BCP 47)', h('input', { type: 'text', name: 'lang', placeholder: 'zh-CN', value: account?.langCode === 'en' ? '' : account?.langCode ?? 'zh-CN' })),
                 h('label', { class: 'f' }, '国家/地区', h('input', { type: 'text', name: 'geo', placeholder: 'CN 或 auto', value: account?.geoLocale === 'AUTO' ? 'auto' : account?.geoLocale === 'auto' ? 'auto' : account?.geoLocale ?? 'CN' }))),
