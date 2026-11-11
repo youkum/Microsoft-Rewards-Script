@@ -88,7 +88,9 @@ export function buildSingleAccountEnv(accountIndex, sourceEnv = defaultSourceEnv
         throw err
     }
 
-    const env = {}
+    const env = {
+        ACCOUNTS_FILTERED: 'true'
+    }
 
     for (const key of Object.keys(sourceEnv)) {
         if (/^ACCOUNT_\d+_/.test(key)) env[key] = ''
@@ -138,7 +140,9 @@ export function buildExcludedAccountsEnv(excludedAccountIndexes, sourceEnv = def
         throw err
     }
 
-    const env = {}
+    const env = {
+        ACCOUNTS_FILTERED: 'true'
+    }
     for (const key of Object.keys(sourceEnv)) {
         if (/^ACCOUNT_\d+_/.test(key)) env[key] = ''
     }

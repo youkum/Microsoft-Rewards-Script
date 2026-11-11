@@ -56,6 +56,9 @@ function ensureEnvLoaded(): void {
             }
 
             if (process.env[key] === undefined) {
+                if (process.env.ACCOUNTS_FILTERED === 'true' && /^ACCOUNT_\d+_/.test(key)) {
+                    continue
+                }
                 process.env[key] = value
             }
         }
@@ -69,6 +72,10 @@ function ensureEnvLoaded(): void {
 // from the embedded dashboard apply to every run (including cron-triggered ones
 // in Docker) without touching this process's start environment.
 function applyAccountsEnvOverlay(): void {
+    if (process.env.ACCOUNTS_FILTERED === 'true') {
+        return
+    }
+
     const root = getProjectRoot()
     const candidates = [
         path.join(root, 'config', 'accounts.env'),

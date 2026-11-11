@@ -4,6 +4,19 @@
 
 ---
 
+## [2026-11-11] - 修复 WebUI 单一账号运行失效缺陷（隔离环境变量与覆盖保护）
+
+### 🐛 缺陷修复
+1. **解决“只跑此号”却从第一个账号开始跑的问题**：
+   - **根本原因**：WebUI 在点击“只跑此号”或排除账号调度时，通过 `buildSingleAccountEnv` / `buildExcludedAccountsEnv` 将选定账号映射至子进程的环境变量（`ACCOUNT_1_*`），并清空其余槽位。但机器人子进程在启动时，`Load.ts` 中的 `applyAccountsEnvOverlay()` 会无条件再次从磁盘读取 `config/accounts.env` 并写入 `process.env`，导致子进程中传入的单账号筛选环境变量被全盘覆盖还原为磁盘上的全部账号，从而始终从第一个账号开始顺序执行。
+   - **修复方案**：
+     - 在 `scripts/api/accounts.js` 中的 `buildSingleAccountEnv` 与 `buildExcludedAccountsEnv` 注入明确的运行态隔离标记 `ACCOUNTS_FILTERED: 'true'`；
+     - 在 `src/util/Load.ts` 的 `ensureEnvLoaded()` 与 `applyAccountsEnvOverlay()` 中检测此标记：当处于筛选/单账号运行模式下时，跳过对 `config/accounts.env` 的全量注入，并不允许 `.env` 重入未指定的账号槽位，从而保障单账号与自定义排除账号的独立运行。
+2. **新增单账号环境构建与排除测试套件**：
+   - 增加 `scripts/api/accounts.test.js`，严格验证单账号与排除模式下的环境变量隔离和映射正确性，并集成至 `npm run test:api`。
+
+---
+
 ## [2026-11-11] - 修复密码引导文案误判致命错误、加固 KMSI 状态机流转与全账号 WebUI 统一编辑
 
 ### 🛡️ 登录认证与状态机修复

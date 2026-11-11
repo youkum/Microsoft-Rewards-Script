@@ -24,7 +24,7 @@
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "test:log-parser": "node --test scripts/api/logParser.test.js",
-        "test:api": "node --test scripts/api/envStore.test.js scripts/api/pointsHistory.test.js",
+        "test:api": "node --test scripts/api/envStore.test.js scripts/api/pointsHistory.test.js scripts/api/accounts.test.js",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "clear-diagnostics": "rimraf diagnostics",
