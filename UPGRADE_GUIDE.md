@@ -2,7 +2,7 @@
 
 ## 1. 当前只更新 GitHub 源码，不升级现有部署
 
-本次变更保存在 `youkum/Microsoft-Rewards-Script` 的独立更新分支 `improvements/webui-pushplus-platform-20261117`，以 PR 方式提交到 `V4-china` 审查（PR 编号待创建后补充）；**PR 尚未合并，尚未发布本次更新对应的容器镜像或 GitHub Release，现有旧部署保持不动**。推送分支、创建 PR 与生产发布是不同步骤。
+本次变更保存在 `youkum/Microsoft-Rewards-Script` 的独立更新分支 `improvements/webui-pushplus-platform-20261117`，以 [草稿 PR #1](https://github.com/youkum/Microsoft-Rewards-Script/pull/1) 提交到 `V4-china` 审查；**PR 尚未合并，尚未发布本次更新对应的容器镜像或 GitHub Release，现有旧部署保持不动**。推送分支、创建 PR 与生产发布是不同步骤。
 
 - 现在不要在生产目录执行 `git pull`、重新构建、拉取移动镜像标签或自动升级。
 - 不要把现有镜像的旧版本标签当成本次源码的构建结果。

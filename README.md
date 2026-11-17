@@ -20,7 +20,7 @@
 
 > [!IMPORTANT]
 > **2026-11-17 更新当前保存在独立分支 `improvements/webui-pushplus-platform-20261117`，供审查及后续升级，尚未合并或发布镜像。现有部署继续沿用旧版本，无需现在拉取、重建或迁移。**
-> 更新内容见 [本轮更新说明](RELEASE_NOTES_20261117.md)；准备升级时再按 [升级与回滚指导](UPGRADE_GUIDE.md) 执行。Linux amd64/ARM64 原生容器检查仍需 CI 验证。
+> [草稿 PR #1](https://github.com/youkum/Microsoft-Rewards-Script/pull/1) · 更新内容见 [本轮更新说明](RELEASE_NOTES_20261117.md)；准备升级时再按 [升级与回滚指导](UPGRADE_GUIDE.md) 执行。Linux amd64/ARM64 原生容器检查仍需 CI 验证。
 
 > [!NOTE]
 > 🤖 **Vibe-Coding 模式说明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
