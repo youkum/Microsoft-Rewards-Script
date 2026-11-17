@@ -94,7 +94,11 @@ export default class BrowserFunc {
         if (!page || page.isClosed()) return null
 
         try {
-            this.bot.logger.info(this.bot.isMobile, 'GET-DASHBOARD-DATA', '正在尝试通过真实浏览器内部执行 Flyout 请求兜底')
+            this.bot.logger.info(
+                this.bot.isMobile,
+                'GET-DASHBOARD-DATA',
+                '正在尝试通过真实浏览器内部执行 Flyout 请求兜底'
+            )
             const flyoutData = await page.evaluate(async (url: string) => {
                 try {
                     const res = await fetch(url, {
@@ -112,7 +116,11 @@ export default class BrowserFunc {
             if (flyoutData && !flyoutData.isError) {
                 const mapped = mapFlyoutToDashboard(flyoutData)
                 this.logBotDetectionMetrics(mapped)
-                this.bot.logger.info(this.bot.isMobile, 'GET-DASHBOARD-DATA', '通过浏览器内部 Flyout 兜底获取仪表板成功')
+                this.bot.logger.info(
+                    this.bot.isMobile,
+                    'GET-DASHBOARD-DATA',
+                    '通过浏览器内部 Flyout 兜底获取仪表板成功'
+                )
                 return mapped
             }
         } catch (err) {
@@ -224,10 +232,9 @@ export default class BrowserFunc {
         const firstTime = !this.botMetricsLoggedPlatforms.has(platform)
         this.botMetricsLoggedPlatforms.add(platform)
 
-        const message =
-            `机器人检测指标 | serpbotscore=${score ?? '未知'} | 更新时间=${
-                scoreUpdated ? String(scoreUpdated).slice(0, 16) : '未知'
-            } | userWarnings=${warningNames.length > 0 ? warningNames.join(', ') : '无'}`
+        const message = `机器人检测指标 | serpbotscore=${score ?? '未知'} | 更新时间=${
+            scoreUpdated ? String(scoreUpdated).slice(0, 16) : '未知'
+        } | userWarnings=${warningNames.length > 0 ? warningNames.join(', ') : '无'}`
 
         if (warningNames.length > 0) {
             this.bot.logger.warn(this.bot.isMobile, 'GET-DASHBOARD-DATA', message)
@@ -358,9 +365,7 @@ export default class BrowserFunc {
                 return { readToEarn: 0, checkIn: 0, totalEarnablePoints: 0 }
             }
 
-            const eligibleActivities = promotions.filter(x =>
-                eligibleOffers.includes(x?.attributes?.offerid ?? '')
-            )
+            const eligibleActivities = promotions.filter(x => eligibleOffers.includes(x?.attributes?.offerid ?? ''))
 
             let readToEarn = 0
             let checkIn = 0
@@ -514,7 +519,7 @@ export default class BrowserFunc {
     }
 
     async getAllAccountPoints(): Promise<AccountAllPointsSummary> {
-        let dashboardData: DashboardData | null = null
+        let dashboardData: DashboardData
         try {
             dashboardData = await this.getDashboardData()
         } catch {
@@ -534,10 +539,7 @@ export default class BrowserFunc {
             this.bot.userData.initialPoints ??
             0
 
-        const lifetimePoints =
-            Number(userStatus?.lifetimePoints) ||
-            Number(snapshot?.account?.lifetimeEarn) ||
-            0
+        const lifetimePoints = Number(userStatus?.lifetimePoints) || Number(snapshot?.account?.lifetimeEarn) || 0
 
         const lifetimeRedeemed = Number(userStatus?.lifetimePointsRedeemed) || 0
         const lifetimeGiving = Number(userStatus?.lifetimeGivingPoints) || 0
@@ -611,12 +613,13 @@ export default class BrowserFunc {
         const dailyPointCounters = counters?.dailyPoint
         let todayEarned = 0
         if (Array.isArray(dailyPointCounters) && dailyPointCounters.length > 0) {
-            todayEarned = dailyPointCounters.reduce(
-                (sum, c) => sum + Math.max(0, Number(c?.pointProgress) || 0),
-                0
-            )
+            todayEarned = dailyPointCounters.reduce((sum, c) => sum + Math.max(0, Number(c?.pointProgress) || 0), 0)
         }
-        if (todayEarned === 0 && this.bot.userData.initialPoints > 0 && availablePoints > this.bot.userData.initialPoints) {
+        if (
+            todayEarned === 0 &&
+            this.bot.userData.initialPoints > 0 &&
+            availablePoints > this.bot.userData.initialPoints
+        ) {
             todayEarned = availablePoints - this.bot.userData.initialPoints
         }
 
@@ -673,7 +676,9 @@ export default class BrowserFunc {
     async bootstrap(page: Page): Promise<void> {
         try {
             // /earn is the offers page
-            await page.goto(URLs.rewards.earn, { waitUntil: 'domcontentloaded' })
+            await this.bot.performance.measure('navigation', () =>
+                page.goto(URLs.rewards.earn, { waitUntil: 'domcontentloaded' })
+            )
 
             // first-time welcome modal blocks the dashboard from rendering
             await this.dismissRewardsWelcomeDialog(page)
@@ -928,13 +933,15 @@ export default class BrowserFunc {
 
         try {
             if (persistSession) {
-                const storageState = await browser.storageState()
-                this.bot.logger.debug(
-                    this.bot.isMobile,
-                    'CLOSE-BROWSER',
-                    `正在保存会话 | Cookie数=${storageState.cookies.length} | origins=${storageState.origins.length}`
-                )
-                saveStorageState(this.bot.config.sessionPath, email, this.bot.isMobile, storageState)
+                await this.bot.performance.measure('session.save', async () => {
+                    const storageState = await browser.storageState()
+                    this.bot.logger.debug(
+                        this.bot.isMobile,
+                        'CLOSE-BROWSER',
+                        `正在保存会话 | Cookie数=${storageState.cookies.length} | origins=${storageState.origins.length}`
+                    )
+                    saveStorageState(this.bot.config.sessionPath, email, this.bot.isMobile, storageState)
+                })
             }
         } catch (error) {
             if (isBrowserClosedError(error)) {
@@ -959,11 +966,7 @@ export default class BrowserFunc {
                 if (isBrowserClosedError(error)) {
                     this.bot.logger.debug(this.bot.isMobile, 'CLOSE-BROWSER', '浏览器已处于关闭状态。')
                 } else {
-                    this.bot.logger.warn(
-                        this.bot.isMobile,
-                        'CLOSE-BROWSER',
-                        '关闭时遇到错误，但进程仍在退出。'
-                    )
+                    this.bot.logger.warn(this.bot.isMobile, 'CLOSE-BROWSER', '关闭时遇到错误，但进程仍在退出。')
                 }
             }
         }
@@ -988,11 +991,7 @@ export default class BrowserFunc {
                 return await response.text()
             }
 
-            this.bot.logger.debug(
-                this.bot.isMobile,
-                'REWARDS-PAGE',
-                `获取 ${route} 失败 | 状态码=${response.status()}`
-            )
+            this.bot.logger.debug(this.bot.isMobile, 'REWARDS-PAGE', `获取 ${route} 失败 | 状态码=${response.status()}`)
         } catch (error) {
             this.bot.logger.debug(
                 this.bot.isMobile,
@@ -1012,11 +1011,7 @@ export default class BrowserFunc {
     async checkpointActiveSession(source = 'SESSION-CHECKPOINT'): Promise<boolean> {
         const page = this.getActivePage()
         if (!page) {
-            this.bot.logger.debug(
-                this.bot.isMobile,
-                source,
-                '无法保存会话检查点，因为没有可用的活动浏览器页面'
-            )
+            this.bot.logger.debug(this.bot.isMobile, source, '无法保存会话检查点，因为没有可用的活动浏览器页面')
             return false
         }
 
@@ -1120,13 +1115,15 @@ export default class BrowserFunc {
             const email = this.bot.currentAccountEmail
             if (!email) return
 
-            const storageState = await context.storageState()
-            saveStorageState(this.bot.config.sessionPath, email, this.bot.isMobile, storageState)
-            this.bot.logger.debug(
-                this.bot.isMobile,
-                source,
-                `已持久化活动浏览器会话 | Cookie数=${storageState.cookies.length} | origins=${storageState.origins.length}`
-            )
+            await this.bot.performance.measure('session.save', async () => {
+                const storageState = await context.storageState()
+                saveStorageState(this.bot.config.sessionPath, email, this.bot.isMobile, storageState)
+                this.bot.logger.debug(
+                    this.bot.isMobile,
+                    source,
+                    `已持久化活动浏览器会话 | Cookie数=${storageState.cookies.length} | origins=${storageState.origins.length}`
+                )
+            })
         } catch (error) {
             this.bot.logger.debug(
                 this.bot.isMobile,
@@ -1213,10 +1210,12 @@ export default class BrowserFunc {
         if (!email) return
 
         const saved = loadSession(this.bot.config.sessionPath, email, this.bot.isMobile)
-        saveStorageState(this.bot.config.sessionPath, email, this.bot.isMobile, {
-            cookies: updated,
-            origins: saved?.storageState?.origins ?? []
-        })
+        this.bot.performance.measureSync('session.save', () =>
+            saveStorageState(this.bot.config.sessionPath, email, this.bot.isMobile, {
+                cookies: updated,
+                origins: saved?.storageState?.origins ?? []
+            })
+        )
         this.bot.logger.debug(
             this.bot.isMobile,
             'COOKIE-SYNC',

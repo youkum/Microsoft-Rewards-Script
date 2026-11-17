@@ -115,23 +115,19 @@ export class CodeLogin {
             if (emailProofInput) {
                 const selectorVariant =
                     emailProofInput.selector === this.emailVerificationInputSelectors[0] ? 'new' : 'old'
-                this.bot.logger.debug(
-                    this.bot.isMobile,
-                    'LOGIN-CODE',
-                    `使用${selectorVariant}版邮箱验证输入选择器`
-                )
+                this.bot.logger.debug(this.bot.isMobile, 'LOGIN-CODE', `使用${selectorVariant}版邮箱验证输入选择器`)
                 const maskedHint = emailMessage?.match(/[A-Za-z0-9._*+-]+@[A-Za-z0-9.*-]+\.[A-Za-z]{2,}/)?.[0]
-                this.bot.logger.info(
-                    this.bot.isMobile,
-                    'LOGIN-CODE',
-                    '检测到邮箱验证挑战，等待邮箱地址'
-                )
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', '检测到邮箱验证挑战，等待邮箱地址')
 
                 let emailVerified = false
 
                 // 若配置中已指定恢复邮箱且有效，优先尝试
                 if (preconfiguredEmail && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(preconfiguredEmail)) {
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', `尝试使用已配置的安全邮箱: ${preconfiguredEmail}`)
+                    this.bot.logger.info(
+                        this.bot.isMobile,
+                        'LOGIN-CODE',
+                        `尝试使用已配置的安全邮箱: ${preconfiguredEmail}`
+                    )
                     const prefilled = await this.fillEmail(page, preconfiguredEmail)
                     if (prefilled) {
                         await this.bot.utils.wait(500)
@@ -141,7 +137,11 @@ export class CodeLogin {
                             this.bot.logger.info(this.bot.isMobile, 'LOGIN-CODE', '已配置邮箱已接受，验证代码已发送')
                             emailVerified = true
                         } else {
-                            this.bot.logger.warn(this.bot.isMobile, 'LOGIN-CODE', `已配置邮箱未被接受: ${emailError}，转为用户交互输入`)
+                            this.bot.logger.warn(
+                                this.bot.isMobile,
+                                'LOGIN-CODE',
+                                `已配置邮箱未被接受: ${emailError}，转为用户交互输入`
+                            )
                             const inputToClear = await this.findEmailVerificationInput(page)
                             if (inputToClear) {
                                 await inputToClear.input.click()

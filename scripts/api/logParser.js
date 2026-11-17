@@ -110,12 +110,10 @@ const RE = {
         /^(?:快照完成|Snapshot completed) \| offers=(\d+) \| (?:可上报|reportable)=(\d+) \| streaks=(\d+) \| (?:连续保护已启用|streakProtectionEnabled)=(true|false|null) \| (?:连续保护剩余天数|streakProtectionRemainingDays)=(\d+|null) \| (?:连续计数|streakCounter)=(\d+|null) \| (?:等级|level)=([^|]+) \| (?:账户|account)=(\S+@\S+)$/i,
     accountEnd:
         /^(?:账户完成|Account completed): (\S+) \| (?:获得积分|pointsGained)=(-?\d+) \| (?:原余额|originalBalance|initialPoints)=(\d+) \| (?:现余额|currentBalance|finalPoints)=(\d+) \| (?:持续秒数|durationSeconds)=([\d.]+)/i,
-    runEnd:
-        /^(?:全部账户完成|All accounts completed) \| (?:处理账户数|accountsProcessed)=(\d+) \| (?:获得积分|pointsGained)=(-?\d+) \| (?:原余额|originalBalance|initialPoints)=(\d+) \| (?:现余额|currentBalance|finalPoints)=(\d+) \| (?:运行分钟数|runtimeMinutes)=([\d.]+)/i,
+    runEnd: /^(?:全部账户完成|All accounts completed) \| (?:处理账户数|accountsProcessed)=(\d+) \| (?:获得积分|pointsGained)=(-?\d+) \| (?:原余额|originalBalance|initialPoints)=(\d+) \| (?:现余额|currentBalance|finalPoints)=(\d+) \| (?:运行分钟数|runtimeMinutes)=([\d.]+)/i,
     accountError: /^(\S+@\S+) \| (?:错误|error)=([\s\S]+)$/i,
     flowFailed: /(?:(\S+@\S+) 的.*流程失败:|^(\S+@\S+) flow failed:)/i,
-    accountDelay:
-        /^(?:等待|Waiting) ([\d.]+) (?:秒后开始下一个账户|seconds before next account)(?: \((\S+@\S+)\))?/i,
+    accountDelay: /^(?:等待|Waiting) ([\d.]+) (?:秒后开始下一个账户|seconds before next account)(?: \((\S+@\S+)\))?/i,
 
     searchStart: /^(?:开始必应搜索|Starting Bing search) \| (?:当前余额|currentBalance)=(\d+)/i,
     flowCollected:
@@ -143,62 +141,72 @@ function accountEmailForEntry(state, entry) {
 function pointEventSource(title, message) {
     switch (title) {
         case 'SEARCH-BING':
-            return (message.startsWith('必应搜索完成') || message.includes('pointsGained=')) ? 'search' : null
+            return message.startsWith('必应搜索完成') || message.includes('pointsGained=') ? 'search' : null
         case 'SEARCH-BONUS':
-            return (message.startsWith('必应搜索完成') || message.includes('pointsGained=')) ? 'bonus' : null
+            return message.startsWith('必应搜索完成') || message.includes('pointsGained=') ? 'bonus' : null
         case 'READ-TO-EARN':
-            return (message.startsWith('文章后的积分变化') ||
-                    message.startsWith('未获得积分，停止读文赚积分') ||
-                    message.startsWith('已阅读第') ||
-                    message.startsWith('读文赚积分完成') ||
-                    message.startsWith('Read article') ||
-                    message.startsWith('Read to earn complete') ||
-                    message.includes('pointsGained=')) ? 'read' : null
+            return message.startsWith('文章后的积分变化') ||
+                message.startsWith('未获得积分，停止读文赚积分') ||
+                message.startsWith('已阅读第') ||
+                message.startsWith('读文赚积分完成') ||
+                message.startsWith('Read article') ||
+                message.startsWith('Read to earn complete') ||
+                message.includes('pointsGained=')
+                ? 'read'
+                : null
         case 'DAILY-CHECK-IN':
-            return (message.startsWith('每日签到完成') ||
-                    message.startsWith('Completed Daily Check-In') ||
-                    message.includes('pointsGained=')) ? 'checkIn' : null
+            return message.startsWith('每日签到完成') ||
+                message.startsWith('Completed Daily Check-In') ||
+                message.includes('pointsGained=')
+                ? 'checkIn'
+                : null
         case 'CLAIM-BONUS-POINTS':
-            return (message.startsWith('领取奖励积分完成') ||
-                    message.startsWith('没有可领取的积分') ||
-                    message.startsWith('Completed ClaimBonusPoints') ||
-                    message.includes('pointsGained='))
+            return message.startsWith('领取奖励积分完成') ||
+                message.startsWith('没有可领取的积分') ||
+                message.startsWith('Completed ClaimBonusPoints') ||
+                message.includes('pointsGained=')
                 ? 'claimBonus'
                 : null
         case 'CLAIM-REWARD':
-            return (message.startsWith('奖励已领取') ||
-                    message.startsWith('Reward claimed') ||
-                    message.includes('pointsGained=')) ? 'claimReward' : null
+            return message.startsWith('奖励已领取') ||
+                message.startsWith('Reward claimed') ||
+                message.includes('pointsGained=')
+                ? 'claimReward'
+                : null
         case 'URL-REWARD':
-            return (message.startsWith('UrlReward 完成') ||
-                    message.startsWith('UrlReward 未获得积分') ||
-                    message.startsWith('Completed UrlReward') ||
-                    message.includes('pointsGained='))
+            return message.startsWith('UrlReward 完成') ||
+                message.startsWith('UrlReward 未获得积分') ||
+                message.startsWith('Completed UrlReward') ||
+                message.includes('pointsGained=')
                 ? 'urlReward'
                 : null
         case 'VISUAL-SEARCH':
-            return (message.startsWith('每日视觉搜索完成') ||
-                    message.startsWith('每日视觉搜索已记录') ||
-                    message.startsWith('Daily visual search done') ||
-                    message.includes('pointsGained='))
+            return message.startsWith('每日视觉搜索完成') ||
+                message.startsWith('每日视觉搜索已记录') ||
+                message.startsWith('Daily visual search done') ||
+                message.includes('pointsGained=')
                 ? 'visualSearch'
                 : null
         case 'APP-REWARD':
-            return (message.startsWith('AppReward 完成') ||
-                    message.startsWith('AppReward 完成但未获得积分') ||
-                    message.startsWith('Completed AppReward') ||
-                    message.includes('pointsGained='))
+            return message.startsWith('AppReward 完成') ||
+                message.startsWith('AppReward 完成但未获得积分') ||
+                message.startsWith('Completed AppReward') ||
+                message.includes('pointsGained=')
                 ? 'appReward'
                 : null
         case 'PUNCHCARD':
-            return (message.includes('COMPLETE') ||
-                    message.includes('in progress') ||
-                    message.includes('Reported child') ||
-                    message.includes('pointsGained=')) ? 'punchcard' : null
+            return message.includes('COMPLETE') ||
+                message.includes('in progress') ||
+                message.includes('Reported child') ||
+                message.includes('pointsGained=')
+                ? 'punchcard'
+                : null
         case 'SEARCH-ON-BING-SEARCH':
-            return (message.startsWith('SearchOnBing 活动完成') ||
-                    message.startsWith('SearchOnBing activity completed') ||
-                    message.includes('pointsGained=')) ? 'searchOnBing' : null
+            return message.startsWith('SearchOnBing 活动完成') ||
+                message.startsWith('SearchOnBing activity completed') ||
+                message.includes('pointsGained=')
+                ? 'searchOnBing'
+                : null
         default:
             return null
     }
@@ -273,9 +281,10 @@ function applyEdgeBrowsing(state, entry) {
     if (!account) return null
 
     const message = entry.message ?? ''
-    const finalReports = (message.startsWith('后台 Edge 浏览活动结束') || message.startsWith('Finished background Edge browsing activity'))
-        ? numericField(message, 'reports')
-        : null
+    const finalReports =
+        message.startsWith('后台 Edge 浏览活动结束') || message.startsWith('Finished background Edge browsing activity')
+            ? numericField(message, 'reports')
+            : null
     const progress =
         fractionField(message, 'reportsCompleted') ??
         fractionField(message, 'report') ??
@@ -298,7 +307,10 @@ function applyEdgeBrowsing(state, entry) {
         updatedAt: null
     }
 
-    if (message.startsWith('开始后台 Edge 浏览活动') || message.startsWith('Started background Edge browsing activity')) {
+    if (
+        message.startsWith('开始后台 Edge 浏览活动') ||
+        message.startsWith('Started background Edge browsing activity')
+    ) {
         previous.status = 'running'
         previous.targetMinutes = numericField(message, 'targetMinutes')
         previous.serverIntervalMinutes = numericField(message, 'serverIntervalMinutes')
@@ -312,7 +324,10 @@ function applyEdgeBrowsing(state, entry) {
     } else if (message.startsWith('已提交 Edge 浏览报告') || message.startsWith('Submitted Edge browsing report')) {
         previous.status = 'running'
         previous.nextReportInSeconds = null
-    } else if (message.startsWith('后台 Edge 浏览活动结束') || message.startsWith('Finished background Edge browsing activity')) {
+    } else if (
+        message.startsWith('后台 Edge 浏览活动结束') ||
+        message.startsWith('Finished background Edge browsing activity')
+    ) {
         const duplicates = numericField(message, 'duplicates') ?? previous.duplicates
         const failed = numericField(message, 'failed') ?? previous.failed
         const serverCompleteMatch = message.match(/(?:^| \| )serverComplete=(true|false)(?= \| |$)/)

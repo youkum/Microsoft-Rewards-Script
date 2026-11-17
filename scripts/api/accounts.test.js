@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { buildSingleAccountEnv, buildExcludedAccountsEnv } from './accounts.js'
+import { buildSingleAccountEnv, buildExcludedAccountsEnv, mergeAccountStats } from './accounts.js'
 
 test('buildSingleAccountEnv isolates selected account to slot 1 and sets ACCOUNTS_FILTERED', () => {
     const mockEnv = {
@@ -21,6 +21,41 @@ test('buildSingleAccountEnv isolates selected account to slot 1 and sets ACCOUNT
     assert.equal(res.env.ACCOUNT_1_PASSWORD, 'pw2')
     assert.equal(res.env.ACCOUNT_2_EMAIL, '')
     assert.equal(res.env.ACCOUNT_3_EMAIL, '')
+})
+
+test('mergeAccountStats aggregates history once per account and omits the internal email key', () => {
+    const accounts = [
+        { index: 1, email: 'acc1@test.com', emailKey: 'acc1@test.com' },
+        { index: 2, email: 'acc2@test.com', emailKey: 'acc2@test.com' }
+    ]
+    const runs = [
+        {
+            startedAt: '2026-11-16T10:00:00.000Z',
+            accounts: [
+                { email: 'acc1@test.com', collected: 20, success: true, streakProtection: true },
+                { email: 'acc2@test.com', collected: 5, success: true }
+            ]
+        },
+        {
+            startedAt: '2026-11-15T10:00:00.000Z',
+            accounts: [
+                { email: 'acc1@test.com', collected: 10, success: false },
+                { email: 'acc2@test.com', collected: 7, success: true, edgeBrowsing: 3 }
+            ]
+        }
+    ]
+
+    const [first, second] = mergeAccountStats(accounts, runs)
+    assert.equal(first.runs, 2)
+    assert.equal(first.totalCollected, 30)
+    assert.equal(first.successStreak, 1)
+    assert.equal(first.streakProtection, true)
+    assert.equal(first.lastCollected, 20)
+    assert.equal('emailKey' in first, false)
+    assert.equal(second.runs, 2)
+    assert.equal(second.totalCollected, 12)
+    assert.equal(second.successStreak, 2)
+    assert.equal(second.edgeBrowsing, 3)
 })
 
 test('buildExcludedAccountsEnv filters accounts and sets ACCOUNTS_FILTERED', () => {

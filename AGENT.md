@@ -1,6 +1,7 @@
 # AGENT.md - AI Coding Agent Guide
 
 This repository contains the optimized China edition of Microsoft Rewards Script with full WebUI control panel integration.
+
 - Repository: https://github.com/youkum/Microsoft-Rewards-Script (Branch: `V4-china`)
 - Mode: This project is completely secondary-developed and maintained by AI with human assistance, with humans providing prompts and architectural suggestions (此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化).
 
@@ -11,6 +12,7 @@ This repository contains the optimized China edition of Microsoft Rewards Script
 ## Essential Knowledge for AI Coding Agents
 
 ### 1. File Map
+
 - `src/index.ts`: Application orchestrator, main loop, and notification dispatch.
 - `src/interface/Points.ts`: Type definitions for rewards points (`AccountAllPointsSummary`, `Counters`, etc.).
 - `src/browser/auth/Login.ts`: Microsoft authentication state machine.
@@ -22,6 +24,7 @@ This repository contains the optimized China edition of Microsoft Rewards Script
 - `compose.yaml` & `Dockerfile.cn`: Containerized orchestration with accelerated mirror support.
 
 ### 2. Modification Rules
+
 1. **Never alter log markers without updating `scripts/api/logParser.js`**.
 2. **Never allow `getAllAccountPoints()` or `getCurrentPoints()` to crash**. Use optional chaining and fallbacks.
 3. **Always verify compilation with `npm run build`** and tests with `npm run test:log-parser`.

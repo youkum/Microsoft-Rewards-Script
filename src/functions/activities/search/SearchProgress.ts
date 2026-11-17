@@ -18,8 +18,10 @@ export class SearchProgress {
     constructor(private readonly bot: MicrosoftRewardsBot) {}
 
     public async getCounters(): Promise<Counters> {
-        const dashboard = await this.bot.browser.func.getDashboardData()
-        return dashboard.dashboard.userStatus.counters
+        return this.bot.performance.measure('progress.read', async () => {
+            const dashboard = await this.bot.browser.func.getDashboardData()
+            return dashboard.dashboard.userStatus.counters
+        })
     }
 
     public async getMissing(isMobile: boolean): Promise<MissingSearchPoints> {

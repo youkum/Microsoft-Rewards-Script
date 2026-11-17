@@ -24,15 +24,27 @@ export async function sendPushPlus(config: WebhookPushPlusConfig, content: strin
             template: config.template,
             channel: config.channel
         },
-        timeout: 10000
+        timeout: 10000,
+        // Retrying a notification POST can deliver the same summary twice.
+        retries: 0
     }
 
     await pushPlusQueue.add(async () => {
+        let response
         try {
-            await httpRequest(request)
+            response = await httpRequest<unknown>(request)
         } catch (err) {
             const status = (err as { response?: { status?: number } })?.response?.status
-            if (status === 429) return
+            // Do not retain the original error/cause; HTTP request configs carry tokens.
+            const detail = Number.isInteger(status) ? ` (HTTP ${status})` : ''
+            throw new Error(`PushPlus request failed${detail}`)
+        }
+        if (response.status < 200 || response.status >= 300) {
+            throw new Error(`PushPlus request failed (HTTP ${response.status})`)
+        }
+        const body = response.data
+        if (!body || typeof body !== 'object' || (body as { code?: unknown }).code !== 200) {
+            throw new Error('PushPlus rejected the notification or returned an invalid response')
         }
     })
 }

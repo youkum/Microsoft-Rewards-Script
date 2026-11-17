@@ -148,15 +148,23 @@ export class Login {
                         `相同状态计数: ${sameStateCount}/4 状态为 "${state}"`
                     )
                     if (sameStateCount >= 4) {
-                        this.bot.logger.warn(
-                            this.bot.isMobile,
-                            'LOGIN',
-                            `在状态 "${state}" 停滞4次循环`
-                        )
+                        this.bot.logger.warn(this.bot.isMobile, 'LOGIN', `在状态 "${state}" 停滞4次循环`)
                         if (state === 'KMSI_PROMPT') {
-                            this.bot.logger.info(this.bot.isMobile, 'LOGIN', 'KMSI停滞，尝试点击否/跳过或强制提交表单以推进流程')
-                            await page.locator('input#idBtn_Back, button:has-text("否"), button:has-text("No"), button[data-testid="secondaryButton"]').first().click().catch(() => {})
-                            await page.evaluate(() => (document.querySelector('form') as HTMLFormElement)?.submit()).catch(() => {})
+                            this.bot.logger.info(
+                                this.bot.isMobile,
+                                'LOGIN',
+                                'KMSI停滞，尝试点击否/跳过或强制提交表单以推进流程'
+                            )
+                            await page
+                                .locator(
+                                    'input#idBtn_Back, button:has-text("否"), button:has-text("No"), button[data-testid="secondaryButton"]'
+                                )
+                                .first()
+                                .click()
+                                .catch(() => {})
+                            await page
+                                .evaluate(() => (document.querySelector('form') as HTMLFormElement)?.submit())
+                                .catch(() => {})
                             await this.bot.utils.wait(3000)
                             sameStateCount = 0
                             continue
@@ -295,11 +303,7 @@ export class Login {
                 results.push('FOOTER_ACTION')
             } else {
                 if (footerAction && footerTargetsSpecificProof) {
-                    this.bot.logger.debug(
-                        this.bot.isMobile,
-                        'DETECT-STATE',
-                        '页脚指向具体验证方式；保持主登录方式'
-                    )
+                    this.bot.logger.debug(this.bot.isMobile, 'DETECT-STATE', '页脚指向具体验证方式；保持主登录方式')
                 }
                 this.bot.logger.debug(this.bot.isMobile, 'DETECT-STATE', '检测到主无密码登录操作')
                 results.push('PASSWORDLESS_SEND_CODE')
@@ -574,16 +578,17 @@ export class Login {
         ) {
             return 'EMAIL'
         }
-        if (
-            signature.includes('m11.78 10.22a.75') ||
-            signature.includes('password') ||
-            /password|密码/i.test(label)
-        ) {
+        if (signature.includes('m11.78 10.22a.75') || signature.includes('password') || /password|密码/i.test(label)) {
             return 'PASSWORD'
         }
         // Known passkey/security-key SVG signature keeps it out of the Authenticator fallback
-        if (/picker_fido|passkey|fido|m18 16\.66a3\.51/i.test(signature) || /passkey|通行密钥/i.test(label)) return 'PASSKEY'
-        if (/phone[\s_-]*app[\s_-]*otp|\btotp\b/i.test(signature) || /totp|身份验证器应用中的代码|动态密码/i.test(label)) return 'TOTP'
+        if (/picker_fido|passkey|fido|m18 16\.66a3\.51/i.test(signature) || /passkey|通行密钥/i.test(label))
+            return 'PASSKEY'
+        if (
+            /phone[\s_-]*app[\s_-]*otp|\btotp\b/i.test(signature) ||
+            /totp|身份验证器应用中的代码|动态密码/i.test(label)
+        )
+            return 'TOTP'
         // Known Remote NGC/mobile-app SVG signature identifies Microsoft Authenticator language-independently
         if (
             /remote[\s_-]*ngc|picker_remote_ngc|phone[\s_-]*app[\s_-]*notification|push[\s_-]*notification|m15\.75 2c16\.99 2 18 3/i.test(
@@ -724,7 +729,11 @@ export class Login {
             }
 
             case 'INTERSTITIAL_SKIP': {
-                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到过渡/引导提示（如无密码提示或安全信息），正在跳过')
+                this.bot.logger.info(
+                    this.bot.isMobile,
+                    'LOGIN',
+                    '检测到过渡/引导提示（如无密码提示或安全信息），正在跳过'
+                )
                 const skipSelectors = [
                     '#iShowSkip',
                     'a#iShowSkip',
@@ -774,11 +783,7 @@ export class Login {
             // Enter password - use it only when Microsoft actually presents the password page
             case 'PASSWORD_INPUT': {
                 if (!account.password) {
-                    this.bot.logger.info(
-                        this.bot.isMobile,
-                        'LOGIN',
-                        '检测到密码输入页但未配置密码；返回登录方式选择'
-                    )
+                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到密码输入页但未配置密码；返回登录方式选择')
                     if (await this.tryClick(page, this.selectors.backButton, 'Back button')) return true
 
                     this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '未配置密码且无法返回登录方式选择')
@@ -871,11 +876,7 @@ export class Login {
                         const confirmed = await this.bot.browser.utils.ghostClick(page, this.selectors.primaryButton)
                         if (!confirmed) {
                             this.passwordlessMethodSelected = false
-                            this.bot.logger.warn(
-                                this.bot.isMobile,
-                                'LOGIN',
-                                '无法发送Microsoft Authenticator请求'
-                            )
+                            this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '无法发送Microsoft Authenticator请求')
                             return false
                         }
                         await this.waitForIdle(page, 'after Microsoft Authenticator request')
@@ -891,7 +892,6 @@ export class Login {
                             this.bot.isMobile,
                             'LOGIN',
                             '没有可用的非交互登录方式；邮箱验证码回退需要交互式终端输入'
-
                         )
                         return false
                     }
@@ -939,11 +939,7 @@ export class Login {
             case 'EMAIL_VERIFICATION_INPUT': {
                 if (!account.password) {
                     if (!canPromptForInput()) {
-                        this.bot.logger.error(
-                            this.bot.isMobile,
-                            'LOGIN',
-                            '邮箱验证需要已配置的密码或交互式终端输入'
-                        )
+                        this.bot.logger.error(this.bot.isMobile, 'LOGIN', '邮箱验证需要已配置的密码或交互式终端输入')
                         return false
                     }
 
@@ -952,11 +948,7 @@ export class Login {
                     return true
                 }
 
-                this.bot.logger.info(
-                    this.bot.isMobile,
-                    'LOGIN',
-                    '检测到邮箱验证输入；正在检查备选方式'
-                )
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到邮箱验证输入；正在检查备选方式')
                 await this.waitForIdle(page, 'on email verification page')
 
                 const footerActions = page.locator(this.selectors.footerAction)
@@ -1066,12 +1058,16 @@ export class Login {
                     } catch {}
                 }
                 if (!clicked) {
-                    clicked = await this.bot.browser.utils.ghostClick(page, this.selectors.primaryButton).catch(() => false)
+                    clicked = await this.bot.browser.utils
+                        .ghostClick(page, this.selectors.primaryButton)
+                        .catch(() => false)
                 }
                 if (!clicked) {
                     this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '未能明确点击KMSI按钮，尝试回车或表单提交')
                     await page.keyboard.press('Enter').catch(() => {})
-                    await page.evaluate(() => (document.querySelector('form') as HTMLFormElement)?.submit()).catch(() => {})
+                    await page
+                        .evaluate(() => (document.querySelector('form') as HTMLFormElement)?.submit())
+                        .catch(() => {})
                 }
                 await this.waitForIdle(page, 'after KMSI acceptance')
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', 'KMSI提示已处理')
@@ -1104,11 +1100,7 @@ export class Login {
 
             // Enter your code - prefer its alternate-method footer before Back to avoid an email-code loop
             case 'OTP_CODE_ENTRY': {
-                this.bot.logger.info(
-                    this.bot.isMobile,
-                    'LOGIN',
-                    '检测到OTP代码输入页面；尝试可用的备选登录方式'
-                )
+                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '检测到OTP代码输入页面；尝试可用的备选登录方式')
 
                 if (await this.checkSelector(page, this.selectors.footerAction)) {
                     const clicked = await this.bot.browser.utils.ghostClick(page, this.selectors.footerAction)
@@ -1140,11 +1132,7 @@ export class Login {
                             return true
                         }
 
-                        this.bot.logger.debug(
-                            this.bot.isMobile,
-                            'LOGIN',
-                            'OTP页脚操作未离开代码输入页；回退到返回按钮'
-                        )
+                        this.bot.logger.debug(this.bot.isMobile, 'LOGIN', 'OTP页脚操作未离开代码输入页；回退到返回按钮')
                     }
                 }
 
@@ -1172,11 +1160,7 @@ export class Login {
                 await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
 
                 // 检查是否已经在目标已登录页面
-                if (
-                    hostname === 'bing.com' ||
-                    hostname.endsWith('.bing.com') ||
-                    hostname === 'account.microsoft.com'
-                ) {
+                if (hostname === 'bing.com' || hostname.endsWith('.bing.com') || hostname === 'account.microsoft.com') {
                     this.bot.logger.info(this.bot.isMobile, 'LOGIN', '已处于目标已登录域名，判定为已登录')
                     return true
                 }

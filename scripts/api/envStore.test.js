@@ -70,7 +70,13 @@ test('addAccount picks the lowest free slot and writes atomically', () => {
 
     const slot = addAccount(
         root,
-        validateAccountInput(flattenAccountPayload({ email: 'Two@X.com', password: 'pw two', proxy: { url: 'http://10.0.0.1:3128', http: true } })),
+        validateAccountInput(
+            flattenAccountPayload({
+                email: 'Two@X.com',
+                password: 'pw two',
+                proxy: { url: 'http://10.0.0.1:3128', http: true }
+            })
+        ),
         baseEnv
     )
     assert.equal(slot, 2)
@@ -120,7 +126,7 @@ test('updateAccount preserves unspecified fields and clears emptied proxy', () =
     )
 
     // clearing the proxy drops the whole proxy block
-    updateAccount(root, 1, { proxyUrl: '' }, baseEnv)
+    updateAccount(root, 1, {}, baseEnv, ['proxy'])
     const afterClear = getMergedAccountEnv(root, baseEnv)
     assert.equal(afterClear.ACCOUNT_1_PROXY_URL, undefined)
     assert.ok(fs.existsSync(path.join(root, 'config', 'accounts.env.bak')))
@@ -143,7 +149,10 @@ test('deleteAccount removes only the given web slot', () => {
     assert.equal(merged.ACCOUNT_2_EMAIL, undefined)
     assert.equal(merged.ACCOUNT_9_EMAIL, 'env@x.com')
 
-    assert.throws(() => deleteAccount(root, 9), err => err.code === 'NOT_WEB_MANAGED')
+    assert.throws(
+        () => deleteAccount(root, 9),
+        err => err.code === 'NOT_WEB_MANAGED'
+    )
 })
 
 test('findFreeSlot skips used slots from both sources', () => {
@@ -172,7 +181,10 @@ test('validateAccountInput normalizes and rejects bad input', () => {
     assert.equal(good.proxyUsername, 'u')
     assert.equal(good.saveFingerprintDesktop, 'false')
 
-    assert.throws(() => validateAccountInput({ email: 'not-an-email' }), err => err.code === 'VALIDATION_FAILED')
+    assert.throws(
+        () => validateAccountInput({ email: 'not-an-email' }),
+        err => err.code === 'VALIDATION_FAILED'
+    )
     assert.throws(
         () => validateAccountInput({ email: 'a@b.com', totpSecret: 'abc123' }),
         err => err.code === 'VALIDATION_FAILED'

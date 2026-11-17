@@ -1,5 +1,6 @@
 import fs from 'fs'
 import path from 'path'
+import { parseEnvContent, isSecretEnvKey } from '../../scripts/credentialEnv.cjs'
 
 import type { Account, AccountProxy, ConfigSaveFingerprint } from '../interface/Account'
 import type { Config } from '../interface/Config'
@@ -41,20 +42,7 @@ function ensureEnvLoaded(): void {
     const envFile = resolveProjectFile('.env')
     if (envFile) {
         const raw = fs.readFileSync(envFile, 'utf-8')
-        for (const line of raw.split(/\r?\n/)) {
-            const trimmed = line.trim()
-            if (!trimmed || trimmed.startsWith('#')) continue
-
-            const eq = trimmed.indexOf('=')
-            if (eq === -1) continue
-
-            const key = trimmed.slice(0, eq).trim()
-            let value = trimmed.slice(eq + 1).trim()
-
-            if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-                value = value.slice(1, -1)
-            }
-
+        for (const { key, value } of parseEnvContent(raw)) {
             if (process.env[key] === undefined) {
                 if (process.env.ACCOUNTS_FILTERED === 'true' && /^ACCOUNT_\d+_/.test(key)) {
                     continue
@@ -77,26 +65,13 @@ function applyAccountsEnvOverlay(): void {
     }
 
     const root = getProjectRoot()
-    const candidates = [
-        path.join(root, 'config', 'accounts.env'),
-        path.join(process.cwd(), 'config', 'accounts.env')
-    ]
+    const candidates = [path.join(root, 'config', 'accounts.env'), path.join(process.cwd(), 'config', 'accounts.env')]
     const accountsFile = candidates.find(p => fs.existsSync(p))
     if (!accountsFile) return
 
-    const parsed: { key: string; value: string }[] = []
-    for (const line of fs.readFileSync(accountsFile, 'utf-8').split(/\r?\n/)) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#')) continue
-        const eq = trimmed.indexOf('=')
-        if (eq === -1) continue
-        const key = trimmed.slice(0, eq).trim()
-        let value = trimmed.slice(eq + 1).trim()
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1)
-        }
-        if (/^ACCOUNT_\d+_/.test(key)) parsed.push({ key, value })
-    }
+    const parsed = parseEnvContent(fs.readFileSync(accountsFile, 'utf-8')).filter(entry =>
+        /^ACCOUNT_\d+_/.test(entry.key)
+    )
     if (!parsed.length) return
 
     const webSlots = new Set(parsed.map(entry => /^ACCOUNT_(\d+)_/.exec(entry.key)?.[1] ?? ''))
@@ -114,6 +89,7 @@ function applyAccountsEnvOverlay(): void {
 function envStr(key: string): string | undefined {
     const v = process.env[key]
     if (v === undefined) return undefined
+    if (isSecretEnvKey(key)) return v.length ? v : undefined
     const trimmed = v.trim()
     return trimmed.length ? trimmed : undefined
 }

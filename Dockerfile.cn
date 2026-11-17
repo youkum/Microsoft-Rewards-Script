@@ -7,7 +7,12 @@
 ###############################################################################
 # Stage 1: Builder
 ###############################################################################
-FROM node:24-slim AS builder
+# Keep the glibc distribution stable for impit and Patchright on amd64/arm64.
+# Build each stage for the target platform so npm selects matching native packages.
+FROM node:24-bookworm-slim AS builder
+
+ARG TARGETARCH
+RUN case "$TARGETARCH" in amd64|arm64) ;; *) echo "Unsupported target architecture: $TARGETARCH" >&2; exit 1 ;; esac
 
 WORKDIR /usr/src/microsoft-rewards-script
 
@@ -17,7 +22,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=0
 COPY package.json package-lock.json tsconfig.json ./
 
 # Install all dependencies required to build the script
-RUN npm ci --ignore-scripts
+RUN npm ci --include=optional --ignore-scripts
 
 # Copy source and build
 COPY . .
@@ -25,13 +30,13 @@ RUN npm run build
 
 # Remove build dependencies, and reinstall only runtime dependencies
 RUN rm -rf node_modules \
-    && npm ci --omit=dev --ignore-scripts \
+    && npm ci --omit=dev --include=optional --ignore-scripts \
     && npm cache clean --force
 
 ###############################################################################
 # Stage 2: Runtime
 ###############################################################################
-FROM node:24-slim AS runtime
+FROM node:24-bookworm-slim AS runtime
 
 WORKDIR /usr/src/microsoft-rewards-script
 
@@ -52,41 +57,17 @@ RUN set -eux; \
         sed -i 's#deb.debian.org#mirrors.aliyun.com#g; s#security.debian.org#mirrors.aliyun.com#g' /etc/apt/sources.list.d/debian.sources; \
     fi
 
-# Install minimal system libraries required for Chromium headless to run,
-# plus jq (for config generation/patching) and gettext-base (for envsubst)
+# Application tools and fonts; Patchright installs the browser libraries below
+# from its versioned Debian/architecture dependency map.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cron \
+    procps \
+    util-linux \
+    coreutils \
     gettext-base \
     jq \
     tzdata \
     ca-certificates \
-    libglib2.0-0 \
-    libdbus-1-3 \
-    libexpat1 \
-    libfontconfig1 \
-    libgtk-3-0 \
-    libnspr4 \
-    libnss3 \
-    libasound2 \
-    libflac12 \
-    libatk1.0-0 \
-    libatspi2.0-0 \
-    libdrm2 \
-    libgbm1 \
-    libdav1d6 \
-    libx11-6 \
-    libx11-xcb1 \
-    libxcomposite1 \
-    libxcursor1 \
-    libxdamage1 \
-    libxext6 \
-    libxfixes3 \
-    libxi6 \
-    libxrandr2 \
-    libxrender1 \
-    libxss1 \
-    libxtst6 \
-    libdouble-conversion3 \
     fonts-liberation \
     fonts-noto-core \
     fonts-noto-color-emoji \
@@ -102,7 +83,7 @@ COPY --from=builder /usr/src/microsoft-rewards-script/node_modules ./node_module
 # Install patchright's stealth-patched Chromium headless shell.
 # The container is headless-only so the full browser isn't needed; then clean up
 RUN set -eux; \
-    npx patchright install --with-deps --only-shell chromium; \
+    node node_modules/patchright/cli.js install --with-deps --only-shell chromium; \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # Copy config example into the image so entrypoint can use it as a fallback
@@ -119,10 +100,13 @@ COPY config.example.json ./config.example.json
 COPY --chmod=755 scripts/docker/run_daily.sh ./scripts/docker/run_daily.sh
 COPY --chmod=755 scripts/docker/healthcheck.sh ./scripts/docker/healthcheck.sh
 COPY --chmod=755 scripts/api/ ./scripts/api/
-COPY --chmod=644 scripts/env.js ./scripts/env.js
+COPY --chmod=644 scripts/env.js scripts/credentialEnv.cjs scripts/rewardForecast.cjs scripts/forecastHistory.cjs ./scripts/
 COPY --chmod=644 scripts/package.json ./scripts/package.json
 COPY --chmod=644 src/crontab.template /etc/cron.d/microsoft-rewards-cron.template
 COPY --chmod=755 scripts/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# CI invokes this directly with the entrypoint overridden; it never starts the app.
+COPY --chmod=644 scripts/tests/platform-smoke.mjs ./scripts/tests/platform-smoke.mjs
 
 # Entrypoint handles TZ, accounts/config generation, initial run toggle,
 # cron templating & launch, or API server startup when API_MODE=true

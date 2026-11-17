@@ -20,7 +20,13 @@ test('appendRunRecord appends JSONL and readPointsHistory aggregates', () => {
     const iso = offset => new Date(now - offset * 24 * 60 * 60 * 1000).toISOString()
 
     appendRunRecord(root, record(iso(0), 100, [{ email: 'a@x.com', collected: 100, success: true, balance: 9000 }]))
-    appendRunRecord(root, record(iso(1), 150, [{ email: 'a@x.com', collected: 70, success: true, balance: 8900 }, { email: 'b@x.com', collected: 80, success: false }]))
+    appendRunRecord(
+        root,
+        record(iso(1), 150, [
+            { email: 'a@x.com', collected: 70, success: true, balance: 8900 },
+            { email: 'b@x.com', collected: 80, success: false }
+        ])
+    )
     appendRunRecord(root, record(iso(10), 30, [{ email: 'b@x.com', collected: 30, success: true }]))
     // corrupt line must be skipped gracefully
     fs.appendFileSync(path.join(root, 'config', 'points-history.jsonl'), '{corrupt\n', 'utf-8')

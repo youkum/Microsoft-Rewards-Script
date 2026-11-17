@@ -49,6 +49,10 @@ class Browser {
     }
 
     async createBrowser(account: Account): Promise<BrowserCreationResult> {
+        return this.bot.performance.measure('browser.create', () => this.createBrowserContext(account))
+    }
+
+    private async createBrowserContext(account: Account): Promise<BrowserCreationResult> {
         const headless = this.bot.config.headless
         const channel = this.bot.config.browserChannel ?? 'chromium'
         // 真实 Edge 依赖系统安装；linux（docker）环境通常没有，回退内置补丁版 Chromium
@@ -110,12 +114,14 @@ class Browser {
                     : `正在启动内置的补丁版 Chromium (Edge UA) | headless=${headless} | platform=${process.platform} | proxy=${hasProxy ? 'yes' : 'no'} | tls=${ignoreCertificateErrors ? 'verification-disabled' : 'verified'} | sandbox=${sandboxDisabled ? 'disabled-root' : 'enabled'}`
             )
 
-            browser = await rebrowser.chromium.launch({
-                headless,
-                ...(useRealEdge && { channel: 'msedge' as const }),
-                ...(proxyConfig && { proxy: proxyConfig }),
-                args: [...Browser.BROWSER_ARGS, ...sandboxArgs, ...certArgs]
-            })
+            browser = await this.bot.performance.measure('browser.launch', () =>
+                rebrowser.chromium.launch({
+                    headless,
+                    ...(useRealEdge && { channel: 'msedge' as const }),
+                    ...(proxyConfig && { proxy: proxyConfig }),
+                    args: [...Browser.BROWSER_ARGS, ...sandboxArgs, ...certArgs]
+                })
+            )
         } catch (error) {
             const errorMessage = error instanceof Error ? error.message : String(error)
             this.bot.logger.error(this.bot.isMobile, 'BROWSER', `浏览器启动失败: ${errorMessage}`)
@@ -131,16 +137,10 @@ class Browser {
                     this.bot.isMobile,
                     'SESSION',
                     `正在恢复已保存的浏览器会话 | Cookie数=${session.storageState.cookies.length} | origins=${session.storageState.origins.length} | 已保存分钟数=${ageMinutes}` +
-                        (session.expiredCookiesRemoved
-                            ? ` | 已清除过期Cookie=${session.expiredCookiesRemoved}`
-                            : '')
+                        (session.expiredCookiesRemoved ? ` | 已清除过期Cookie=${session.expiredCookiesRemoved}` : '')
                 )
             } else {
-                this.bot.logger.info(
-                    this.bot.isMobile,
-                    'SESSION',
-                    '未找到已保存的浏览器会话；可能需要登录'
-                )
+                this.bot.logger.info(this.bot.isMobile, 'SESSION', '未找到已保存的浏览器会话；可能需要登录')
             }
 
             const shouldUseFingerprint = this.bot.isMobile
@@ -181,8 +181,7 @@ class Browser {
                 }
 
                 fingerprint =
-                    (reuseFingerprint && savedFingerprint) ||
-                    (await this.generateFingerprint(this.bot.isMobile))
+                    (reuseFingerprint && savedFingerprint) || (await this.generateFingerprint(this.bot.isMobile))
 
                 const screen = fingerprint.fingerprint.screen
 
@@ -220,16 +219,16 @@ class Browser {
             }
 
             context.on('page', p => {
-                p.on('crash', () =>
-                    this.bot.logger.error(this.bot.isMobile, 'BROWSER', `渲染器崩溃 | ${p.url()}`)
-                )
+                p.on('crash', () => this.bot.logger.error(this.bot.isMobile, 'BROWSER', `渲染器崩溃 | ${p.url()}`))
             })
             context.on('close', () => this.bot.logger.warn(this.bot.isMobile, 'BROWSER', '浏览器上下文已关闭'))
 
             context.setDefaultTimeout(this.bot.utils.stringToNumber(this.bot.config?.globalTimeout ?? 30000))
 
             if (shouldUseFingerprint && !reuseFingerprint && !useNativeFingerprint) {
-                saveFingerprint(this.bot.config.sessionPath, account.email, this.bot.isMobile, fingerprint)
+                this.bot.performance.measureSync('session.save', () =>
+                    saveFingerprint(this.bot.config.sessionPath, account.email, this.bot.isMobile, fingerprint)
+                )
             }
 
             this.bot.logger.info(
@@ -292,7 +291,11 @@ class Browser {
         const page = await context.newPage()
         try {
             // userAgentData 仅在安全上下文可用，about:blank 读不到，需在真实页面上读取
-            await page.goto(URLs.bing.origin, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {})
+            await this.bot.performance
+                .measure('navigation', () =>
+                    page.goto(URLs.bing.origin, { waitUntil: 'domcontentloaded', timeout: 30000 })
+                )
+                .catch(() => {})
             const native = await page.evaluate(async () => {
                 interface UABrandVersion {
                     brand: string

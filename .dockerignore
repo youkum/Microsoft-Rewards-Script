@@ -12,3 +12,9 @@ accounts.dev.json
 accounts.main.json
 config.json
 .playwright-chromium-installed
+.env
+.env.*
+config/
+logs/
+clawbot-auth.json
+.zcode/

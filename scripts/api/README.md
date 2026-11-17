@@ -1003,8 +1003,8 @@ web-managed accounts too.
 
 - `POST /accounts` — add an account in the lowest free slot. Body:
   `{"email", "password"?, "totpSecret"?, "recoveryEmail"?, "langCode"?,
-  "geoLocale"?, "proxy": {"url", "port"?, "username"?, "password"?, "http"?},
-  "saveFingerprint": {"mobile"?, "desktop"?}}`. Returns `201` with the assigned
+"geoLocale"?, "proxy": {"url", "port"?, "username"?, "password"?, "http"?},
+"saveFingerprint": {"mobile"?, "desktop"?}}`. Returns `201` with the assigned
   slot; `409 EMAIL_CONFLICT` when the email already exists; `422` on validation
   errors (email format, TOTP base32, proxy protocol whitelist http/https/socks4/socks5,
   port range, BCP 47 lang tag).

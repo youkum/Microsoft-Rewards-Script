@@ -22,5 +22,9 @@ note
 # 本地私密配置与编辑器工作目录，严禁提交
 /.env
 /.zcode/
-/scripts/tests
+/scripts/tests/*
+!/scripts/tests/platform-smoke.mjs
+!/scripts/tests/performance.test.cjs
+!/scripts/tests/docker*.sh
+!/scripts/tests/docker*.test.*
 /docs

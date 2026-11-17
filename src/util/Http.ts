@@ -2,6 +2,7 @@ import { Impit } from 'impit'
 import type { HttpMethod, ImpitResponse, RequestInit as ImpitRequestInit } from 'impit'
 import type { AccountProxy } from '../interface/Account'
 import { parseBrowserProxyUrl } from './Proxy'
+import { Performance } from './Performance'
 
 const DEFAULT_TIMEOUT = 20000
 const MAX_RETRIES = 3
@@ -126,7 +127,8 @@ async function send<T>(
     instance: Impit,
     url: string,
     init: ImpitRequestInit,
-    config: HttpRequestConfig
+    config: HttpRequestConfig,
+    performance: Performance
 ): Promise<HttpResponse<T>> {
     const configuredRetries = config.retries ?? MAX_RETRIES
     const maxRetries = Number.isFinite(configuredRetries) ? Math.max(0, Math.floor(configuredRetries)) : MAX_RETRIES
@@ -135,19 +137,22 @@ async function send<T>(
         let responseStatus: number | undefined
 
         try {
-            const res = await instance.fetch(url, init)
-            responseStatus = res.status
-            const out = await toResponse<T>(res, config)
+            const out = await performance.measure('http.attempt', async () => {
+                const res = await instance.fetch(url, init)
+                responseStatus = res.status
+                const response = await toResponse<T>(res, config)
 
-            if (out.status >= 200 && out.status < 300) return out
+                if (response.status >= 200 && response.status < 300) return response
 
-            const error = new Error(`Request failed with status code ${out.status}`) as Error & {
-                response?: HttpResponse<T>
-                status?: number
-            }
-            error.response = out
-            error.status = out.status
-            throw error
+                const error = new Error(`Request failed with status code ${response.status}`) as Error & {
+                    response?: HttpResponse<T>
+                    status?: number
+                }
+                error.response = response
+                error.status = response.status
+                throw error
+            })
+            return out
         } catch (error) {
             const status = (error as { status?: number })?.status ?? responseStatus
             const permanentClientError =
@@ -173,7 +178,11 @@ class HttpClient {
     private account: AccountProxy
     private defaultHeaders: Record<string, unknown>
 
-    constructor(account: AccountProxy, defaultHeaders: Record<string, unknown> = {}) {
+    constructor(
+        account: AccountProxy,
+        defaultHeaders: Record<string, unknown> = {},
+        private readonly performance = new Performance()
+    ) {
         this.account = account
         this.defaultHeaders = { ...defaultHeaders }
 
@@ -187,6 +196,10 @@ class HttpClient {
     }
 
     public async request<T = unknown>(config: HttpRequestConfig, useProxy = true): Promise<HttpResponse<T>> {
+        return this.performance.measure('http.request', () => this.sendRequest<T>(config, useProxy))
+    }
+
+    private async sendRequest<T>(config: HttpRequestConfig, useProxy: boolean): Promise<HttpResponse<T>> {
         const requestConfig: HttpRequestConfig = {
             ...config,
             headers: mergeRequestHeaders(this.defaultHeaders, config.headers)
@@ -195,10 +208,10 @@ class HttpClient {
 
         if (!useProxy) {
             if (!this.direct) this.direct = new Impit({ browser: 'chrome', timeout: DEFAULT_TIMEOUT })
-            return send<T>(this.direct, url, init, requestConfig)
+            return send<T>(this.direct, url, init, requestConfig, this.performance)
         }
 
-        return send<T>(this.instance, url, init, requestConfig)
+        return send<T>(this.instance, url, init, requestConfig, this.performance)
     }
 
     private buildProxyUrl(proxyConfig: AccountProxy): string {
@@ -220,10 +233,15 @@ class HttpClient {
 
 let sharedInstance: Impit | undefined
 
-export async function httpRequest<T = unknown>(config: HttpRequestConfig): Promise<HttpResponse<T>> {
-    if (!sharedInstance) sharedInstance = new Impit({ browser: 'chrome', timeout: DEFAULT_TIMEOUT })
-    const { url, init } = toInit(config)
-    return send<T>(sharedInstance, url, init, config)
+export async function httpRequest<T = unknown>(
+    config: HttpRequestConfig,
+    performance = new Performance()
+): Promise<HttpResponse<T>> {
+    return performance.measure('http.request', async () => {
+        if (!sharedInstance) sharedInstance = new Impit({ browser: 'chrome', timeout: DEFAULT_TIMEOUT })
+        const { url, init } = toInit(config)
+        return send<T>(sharedInstance, url, init, config, performance)
+    })
 }
 
 export default HttpClient

@@ -12,7 +12,7 @@
         "node": ">=24.0.0"
     },
     "scripts": {
-        "pre-build": "npm i && rimraf dist && npx patchright install chromium",
+        "pre-build": "npm ci && rimraf dist && npx patchright install chromium",
         "install:browser": "npx patchright install chromium",
         "build": "rimraf dist && tsc && node ./scripts/main/copyAssets.js",
         "start": "node ./dist/index.js",
@@ -24,7 +24,14 @@
         "lint": "eslint .",
         "lint:fix": "eslint . --fix",
         "test:log-parser": "node --test scripts/api/logParser.test.js",
-        "test:api": "node --test scripts/api/envStore.test.js scripts/api/pointsHistory.test.js scripts/api/accounts.test.js",
+        "test:api": "node --test scripts/api/*.test.js",
+        "test:web": "node --test scripts/api/web/*.test.js",
+        "benchmark:api": "node scripts/api/benchmark.mjs",
+        "test:platform:lock": "node scripts/tests/platform-smoke.mjs --lock-only",
+        "preview": "node scripts/preview/server.mjs",
+        "test:preview": "node --test scripts/preview/*.test.js",
+        "test:performance": "node --test scripts/tests/performance.test.cjs",
+        "test": "node --test scripts/api/*.test.js scripts/api/web/*.test.js",
         "format": "prettier --write .",
         "format:check": "prettier --check .",
         "clear-diagnostics": "rimraf diagnostics",
@@ -58,7 +65,7 @@
     },
     "dependencies": {
         "chalk": "^4.1.2",
-        "fast-xml-parser": "^5.9.3",
+        "fast-xml-parser": "^5.12.1",
         "fingerprint-generator": "^2.1.88",
         "fingerprint-injector": "^2.1.88",
         "ghost-cursor-playwright-port": "^1.4.3",
@@ -72,6 +79,6 @@
         "semver": "^7.8.1",
         "socks-proxy-agent": "^8.0.5",
         "ts-node": "^10.9.2",
-        "zod": "^4.4.3"
+        "zod": "^4.6.7"
     }
 }

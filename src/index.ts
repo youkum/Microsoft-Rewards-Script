@@ -14,6 +14,9 @@ import type { PageSnapshot } from './browser/ReactFunc'
 import { IpcLog, Logger, formatLocalTimestamp } from './logging/Logger'
 import Utils, { isBrowserClosedError } from './util/Utils'
 import { loadAccounts, loadConfig } from './util/Load'
+import { getProjectRoot } from './util/ConfigSync'
+import { buildRewardForecast, formatRewardForecast } from '../scripts/rewardForecast.cjs'
+import { readForecastHistory } from '../scripts/forecastHistory.cjs'
 import { closeSessionStore, loadResolvedRegion, saveResolvedRegion } from './util/SessionStore'
 import { checkNodeVersion } from './util/Validator'
 import { normalizeCountry, resolveAccountLocale } from './util/Locale'
@@ -25,6 +28,7 @@ import Activities from './functions/Activities'
 import { SearchManager } from './functions/activities/search/SearchManager'
 
 import type { Account } from './interface/Account'
+import { Performance } from './util/Performance'
 import HttpClient from './util/Http'
 import { sendDiscord, flushDiscordQueue } from './logging/Discord'
 import { sendNtfy, flushNtfyQueue } from './logging/Ntfy'
@@ -58,6 +62,7 @@ interface AccountStats {
 
 interface AccountRunResult {
     initialPoints: number
+    finalPoints?: number
     collectedPoints: number
     skippedForBotWarning?: boolean
 }
@@ -96,6 +101,8 @@ interface UserData {
 
 export class MicrosoftRewardsBot {
     public logger: Logger
+    public performance: Performance
+    private finishOverall: (error?: boolean) => void = () => {}
     public config
     public utils: Utils
     public activities: Activities = new Activities(this)
@@ -147,6 +154,15 @@ export class MicrosoftRewardsBot {
         }
         this.accountLocale = resolveAccountLocale({ langCode: 'en', geoLocale: 'US' })
         this.logger = new Logger(this)
+        // PERF records use the existing logger without its mutable account-name prefix.
+        const getConfig = () => this.config
+        const performanceLogger = new Logger({
+            get config() {
+                return getConfig()
+            },
+            userData: { userName: 'MAIN' }
+        } as unknown as MicrosoftRewardsBot)
+        this.performance = new Performance(message => performanceLogger.info('main', 'PERF', message))
         this.accounts = []
         this.cookies = { mobile: [], desktop: [] }
         this.utils = new Utils()
@@ -177,20 +193,12 @@ export class MicrosoftRewardsBot {
         let refreshSucceeded = false
 
         if (!account?.email) {
-            this.logger.debug(
-                this.isMobile,
-                'CONTEXT-REFRESH',
-                `无法刷新奖励上下文 | 原因=${reason} | 账户=不可用`
-            )
+            this.logger.debug(this.isMobile, 'CONTEXT-REFRESH', `无法刷新奖励上下文 | 原因=${reason} | 账户=不可用`)
             return false
         }
 
         try {
-            this.logger.warn(
-                this.isMobile,
-                'CONTEXT-REFRESH',
-                `请求失败后正在刷新奖励浏览器上下文 | 原因=${reason}`
-            )
+            this.logger.warn(this.isMobile, 'CONTEXT-REFRESH', `请求失败后正在刷新奖励浏览器上下文 | 原因=${reason}`)
 
             if (!page || page.isClosed()) {
                 recoverySession = await this.browserFactory.createBrowser(account)
@@ -203,7 +211,7 @@ export class MicrosoftRewardsBot {
                     this.fingerprintDesktop = recoverySession.fingerprint
                 }
 
-                await this.login.login(page, account)
+                await this.performance.measure('login.refresh', () => this.login.login(page, account))
             } else {
                 this.nextActions = {}
                 this.nextRouterStateTree = ''
@@ -212,7 +220,7 @@ export class MicrosoftRewardsBot {
                 try {
                     await this.browser.func.bootstrap(page)
                 } catch {
-                    await this.login.login(page, account)
+                    await this.performance.measure('login.refresh', () => this.login.login(page, account))
                 }
             }
 
@@ -274,6 +282,18 @@ export class MicrosoftRewardsBot {
     }
 
     async run(): Promise<void> {
+        this.finishOverall = this.performance.start('overall')
+        let failed = true
+        try {
+            await this.runConfigured()
+            failed = false
+        } finally {
+            // Cluster completion is event-driven; its exit handler finishes the span.
+            if (failed || this.config.clusters <= 1) this.finishOverall(failed)
+        }
+    }
+
+    private async runConfigured(): Promise<void> {
         const totalAccounts = this.accounts.length
         const runStartTime = Date.now()
 
@@ -292,6 +312,7 @@ export class MicrosoftRewardsBot {
                     'RUN-SKIP',
                     '今天已成功完成过一次运行，按 humanize.skipWhenCompletedToday 跳过本次运行'
                 )
+                this.finishOverall()
                 process.exit(0)
             }
 
@@ -395,6 +416,7 @@ export class MicrosoftRewardsBot {
                 await flushAllWebhooks()
 
                 if (!hadWorkerFailure) markRunSucceeded()
+                this.finishOverall(hadWorkerFailure)
                 process.exit(hadWorkerFailure ? 1 : 0)
             }
         }
@@ -426,6 +448,7 @@ export class MicrosoftRewardsBot {
                     process.send({ __stats: stats })
                 }
 
+                this.finishOverall(stats.some(stat => !stat.success))
                 await flushAllWebhooks()
                 process.exit(0)
             } catch (error) {
@@ -435,6 +458,7 @@ export class MicrosoftRewardsBot {
                     `worker 任务崩溃: ${error instanceof Error ? error.message : String(error)}`
                 )
 
+                this.finishOverall(true)
                 await flushAllWebhooks()
                 process.exit(1)
             }
@@ -483,8 +507,22 @@ export class MicrosoftRewardsBot {
             return
         }
 
-        const content = this.buildSummaryMessage(accountStats, runStartTime, hadWorkerFailure)
-        await sendPushPlus(pushplus, content)
+        try {
+            const forecast = buildRewardForecast({
+                records: readForecastHistory(getProjectRoot(__dirname)),
+                accounts: accountStats,
+                // Failed flows use placeholder zero balances; do not overwrite
+                // the last known balance with those placeholders.
+                currentStats: accountStats.filter(stat => stat.success),
+                rewardGoal: this.config.rewardGoal
+            })
+            const content = `${this.buildSummaryMessage(accountStats, runStartTime, hadWorkerFailure)}\n\n${formatRewardForecast(forecast)}`
+            await sendPushPlus(pushplus, content)
+        } catch {
+            // Never log a request/error object: it may contain the PushPlus token.
+            // A notification failure must not suppress the other summary channels.
+            this.logger.error('main', 'PUSHPLUS-SUMMARY', 'PushPlus 摘要发送失败，请检查网络、令牌和服务状态。')
+        }
     }
 
     private async sendServerChanSummary(
@@ -543,9 +581,13 @@ export class MicrosoftRewardsBot {
                     }`
                 )
 
-                this.http = new HttpClient(account.proxy, {
-                    'Accept-Language': this.accountLocale.acceptLanguage
-                })
+                this.http = new HttpClient(
+                    account.proxy,
+                    {
+                        'Accept-Language': this.accountLocale.acceptLanguage
+                    },
+                    this.performance
+                )
 
                 let flowError: string | undefined
                 const result: AccountRunResult | undefined = await this.Main(account).catch(error => {
@@ -559,7 +601,7 @@ export class MicrosoftRewardsBot {
                 if (result) {
                     const collectedPoints = result.collectedPoints ?? 0
                     const accountInitialPoints = result.initialPoints ?? 0
-                    const accountFinalPoints = accountInitialPoints + collectedPoints
+                    const accountFinalPoints = result.finalPoints ?? accountInitialPoints + collectedPoints
 
                     if (result.skippedForBotWarning) {
                         accountStats.push({
@@ -595,9 +637,10 @@ export class MicrosoftRewardsBot {
                         )
                     }
                 } else {
-                    const errorDetail = flowError && flowError !== 'undefined'
-                        ? flowError.replace(/\r?\n/g, ' ').slice(0, 120)
-                        : '流程失败（未捕获到错误详情）'
+                    const errorDetail =
+                        flowError && flowError !== 'undefined'
+                            ? flowError.replace(/\r?\n/g, ' ').slice(0, 120)
+                            : '流程失败（未捕获到错误详情）'
 
                     accountStats.push({
                         email: accountEmail,
@@ -649,6 +692,7 @@ export class MicrosoftRewardsBot {
             await flushAllWebhooks()
 
             if (!hadFailure) markRunSucceeded()
+            this.finishOverall(hadFailure)
             process.exit(0)
         }
 
@@ -674,9 +718,7 @@ export class MicrosoftRewardsBot {
         this.logger.info(
             'main',
             'ACCOUNT-DELAY',
-            `等待 ${(delayMs / 1000).toFixed(1)} 秒后开始下一个账户${
-                nextEmail ? ` (${nextEmail})` : ''
-            }`
+            `等待 ${(delayMs / 1000).toFixed(1)} 秒后开始下一个账户${nextEmail ? ` (${nextEmail})` : ''}`
         )
         await this.utils.wait(delayMs)
     }
@@ -688,7 +730,7 @@ export class MicrosoftRewardsBot {
 
         this.logger.info(this.isMobile, 'BROWSER', `桌面浏览器已启动 | ${account.email}`)
 
-        await this.login.login(this.mainDesktopPage, account)
+        await this.performance.measure('login.desktop', () => this.login.login(this.mainDesktopPage, account))
         await this.browser.func.checkpointActiveSession('LOGIN-CHECKPOINT')
         this.cookies.desktop = await session.context.cookies()
 
@@ -696,6 +738,10 @@ export class MicrosoftRewardsBot {
     }
 
     async Main(account: Account): Promise<AccountRunResult> {
+        return this.performance.measure('account.overall', () => this.runAccount(account))
+    }
+
+    private async runAccount(account: Account): Promise<AccountRunResult> {
         const accountEmail = account.email
         this.logger.info('main', 'FLOW', `开始为 ${accountEmail} 创建会话`)
 
@@ -752,11 +798,13 @@ export class MicrosoftRewardsBot {
 
                 this.logger.info('main', 'BROWSER', `移动浏览器已启动 | ${accountEmail}`)
 
-                await this.login.login(this.mainMobilePage, account)
+                await this.performance.measure('login.mobile', () => this.login.login(this.mainMobilePage, account))
 
                 if (needsAppAccessToken) {
                     try {
-                        this.accessToken = await this.login.getAppAccessToken(this.mainMobilePage, accountEmail)
+                        this.accessToken = await this.performance.measure('login.app-token', () =>
+                            this.login.getAppAccessToken(this.mainMobilePage, accountEmail)
+                        )
                     } catch (error) {
                         this.logger.error(
                             'main',
@@ -785,11 +833,7 @@ export class MicrosoftRewardsBot {
                             desktopSession = await this.createDesktopSession(account)
                         })
                         await closeDesktopSession()
-                        this.logger.info(
-                            'main',
-                            'FLOW',
-                            '桌面会话预热完成 | 后续桌面阶段将直接复用已保存会话'
-                        )
+                        this.logger.info('main', 'FLOW', '桌面会话预热完成 | 后续桌面阶段将直接复用已保存会话')
                     } catch (error) {
                         this.logger.warn(
                             'main',
@@ -803,11 +847,7 @@ export class MicrosoftRewardsBot {
 
                 if (fullApi) {
                     await closeMobileSession()
-                    this.logger.info(
-                        'main',
-                        'FLOW',
-                        '移动端登录浏览器已关闭；继续使用已保存的会话和 HTTP 请求'
-                    )
+                    this.logger.info('main', 'FLOW', '移动端登录浏览器已关闭；继续使用已保存的会话和 HTTP 请求')
                 }
 
                 const data: DashboardData = await this.browser.func.getDashboardData()
@@ -931,15 +971,15 @@ export class MicrosoftRewardsBot {
                 let bonusPoints = 0
 
                 if (this.config.experimental.edgeBrowsing) {
-                    edgeBrowsingTask = this.activities
-                        .doEdgeBrowsing(data, edgeBrowsingController.signal)
+                    edgeBrowsingTask = this.performance
+                        .measure('activity.edge-browsing', () =>
+                            this.activities.doEdgeBrowsing(data, edgeBrowsingController.signal)
+                        )
                         .catch(error => {
                             this.logger.error(
                                 this.isMobile,
                                 'EDGE-BROWSING',
-                                `意外的后台任务失败 | 信息=${
-                                    error instanceof Error ? error.message : String(error)
-                                }`
+                                `意外的后台任务失败 | 信息=${error instanceof Error ? error.message : String(error)}`
                             )
                         })
                         .finally(() => {
@@ -949,14 +989,20 @@ export class MicrosoftRewardsBot {
 
                 if (fullApi) {
                     if (this.config.ensureStreakProtection) {
-                        await this.activities.doEnsureStreakProtection()
+                        await this.performance.measure('activity.streak-protection', () =>
+                            this.activities.doEnsureStreakProtection()
+                        )
                     }
                     if (this.config.workers.doPunchCards) {
-                        await this.activities.doPunchCardsMobile(data)
+                        await this.performance.measure('activity.punchcards-mobile', () =>
+                            this.activities.doPunchCardsMobile(data)
+                        )
                         await this.gapBetweenWorkers()
                     }
                     if (this.config.workers.doActivateSearchPerk) {
-                        await this.activities.doActivateSearchPerk(data)
+                        await this.performance.measure('activity.search-perk', () =>
+                            this.activities.doActivateSearchPerk(data)
+                        )
                         await this.gapBetweenWorkers()
                     }
 
@@ -973,66 +1019,95 @@ export class MicrosoftRewardsBot {
                     if (desktopBrowserNeeded) {
                         await executionContext.run({ isMobile: false, account }, async () => {
                             desktopSession = await this.createDesktopSession(account)
-                            if (this.config.workers.doPunchCards) await this.activities.doPunchCardsDesktop()
-                            if (doVisualSearch) await this.activities.doVisualSearch(data)
+                            if (this.config.workers.doPunchCards)
+                                await this.performance.measure('activity.punchcards-desktop', () =>
+                                    this.activities.doPunchCardsDesktop()
+                                )
+                            if (doVisualSearch)
+                                await this.performance.measure('activity.visual-search', () =>
+                                    this.activities.doVisualSearch(data)
+                                )
                         })
                         await closeDesktopSession()
                     }
 
                     if (this.config.workers.doDailySet) {
-                        await this.activities.doDailySet(data)
+                        await this.performance.measure('activity.daily-set', () => this.activities.doDailySet(data))
                         await this.gapBetweenWorkers()
                     }
                     if (this.config.workers.doMorePromotions) {
-                        await this.activities.doMorePromotions(data)
+                        await this.performance.measure('activity.promotions', () =>
+                            this.activities.doMorePromotions(data)
+                        )
                         await this.gapBetweenWorkers()
                     }
                     if (appAvailable && this.config.workers.doDailyCheckIn) {
-                        await this.activities.doDailyCheckIn()
+                        await this.performance.measure('activity.check-in', () => this.activities.doDailyCheckIn())
                         await this.gapBetweenWorkers()
                     }
                     if (appAvailable && this.config.workers.doAppPromotions && appData) {
-                        await this.activities.doAppPromotions(appData)
+                        await this.performance.measure('activity.app-promotions', () =>
+                            this.activities.doAppPromotions(appData)
+                        )
                         await this.gapBetweenWorkers()
                     }
                     if (appAvailable && this.config.workers.doReadToEarn) {
-                        await this.activities.doReadToEarn()
+                        await this.performance.measure('activity.read-to-earn', () => this.activities.doReadToEarn())
                         await this.gapBetweenWorkers()
                     }
 
-                    if (doMobileSearch) mobilePoints = await this.searchManager.searchMobile(account)
-                    if (doBonus) bonusPoints = await this.searchManager.bonusMobile(account)
-                    if (doDesktopSearch) desktopPoints = await this.searchManager.searchDesktop(account)
+                    if (doMobileSearch)
+                        mobilePoints = await this.performance.measure('search.mobile', () =>
+                            this.searchManager.searchMobile(account)
+                        )
+                    if (doBonus)
+                        bonusPoints = await this.performance.measure('search.bonus', () =>
+                            this.searchManager.bonusMobile(account)
+                        )
+                    if (doDesktopSearch)
+                        desktopPoints = await this.performance.measure('search.desktop', () =>
+                            this.searchManager.searchDesktop(account)
+                        )
                 } else {
                     if (this.config.ensureStreakProtection) {
-                        await this.activities.doEnsureStreakProtection()
+                        await this.performance.measure('activity.streak-protection', () =>
+                            this.activities.doEnsureStreakProtection()
+                        )
                     }
                     if (this.config.workers.doDailySet) {
-                        await this.activities.doDailySet(data)
+                        await this.performance.measure('activity.daily-set', () => this.activities.doDailySet(data))
                         await this.gapBetweenWorkers()
                     }
                     if (this.config.workers.doActivateSearchPerk) {
-                        await this.activities.doActivateSearchPerk(data)
+                        await this.performance.measure('activity.search-perk', () =>
+                            this.activities.doActivateSearchPerk(data)
+                        )
                         await this.gapBetweenWorkers()
                     }
                     if (this.config.workers.doMorePromotions) {
-                        await this.activities.doMorePromotions(data)
+                        await this.performance.measure('activity.promotions', () =>
+                            this.activities.doMorePromotions(data)
+                        )
                         await this.gapBetweenWorkers()
                     }
                     if (appAvailable && this.config.workers.doDailyCheckIn) {
-                        await this.activities.doDailyCheckIn()
+                        await this.performance.measure('activity.check-in', () => this.activities.doDailyCheckIn())
                         await this.gapBetweenWorkers()
                     }
                     if (appAvailable && this.config.workers.doAppPromotions && appData) {
-                        await this.activities.doAppPromotions(appData)
+                        await this.performance.measure('activity.app-promotions', () =>
+                            this.activities.doAppPromotions(appData)
+                        )
                         await this.gapBetweenWorkers()
                     }
                     if (appAvailable && this.config.workers.doReadToEarn) {
-                        await this.activities.doReadToEarn()
+                        await this.performance.measure('activity.read-to-earn', () => this.activities.doReadToEarn())
                         await this.gapBetweenWorkers()
                     }
                     if (this.config.workers.doPunchCards) {
-                        await this.activities.doPunchCardsMobile(data)
+                        await this.performance.measure('activity.punchcards-mobile', () =>
+                            this.activities.doPunchCardsMobile(data)
+                        )
                         await this.gapBetweenWorkers()
                     }
 
@@ -1051,14 +1126,26 @@ export class MicrosoftRewardsBot {
                     if (parallel && !apiSearch && doMobileSearch && doDesktopSearch) {
                         await executionContext.run({ isMobile: false, account }, async () => {
                             desktopSession = await this.createDesktopSession(account)
-                            if (this.config.workers.doPunchCards) await this.activities.doPunchCardsDesktop()
-                            if (doVisualSearch) await this.activities.doVisualSearch(data)
+                            if (this.config.workers.doPunchCards)
+                                await this.performance.measure('activity.punchcards-desktop', () =>
+                                    this.activities.doPunchCardsDesktop()
+                                )
+                            if (doVisualSearch)
+                                await this.performance.measure('activity.visual-search', () =>
+                                    this.activities.doVisualSearch(data)
+                                )
                         })
 
                         const mobileWork = async (): Promise<[number, number]> => {
                             try {
-                                const searchPoints = await this.searchManager.searchMobile(account)
-                                const extraPoints = doBonus ? await this.searchManager.bonusMobile(account) : 0
+                                const searchPoints = await this.performance.measure('search.mobile', () =>
+                                    this.searchManager.searchMobile(account)
+                                )
+                                const extraPoints = doBonus
+                                    ? await this.performance.measure('search.bonus', () =>
+                                          this.searchManager.bonusMobile(account)
+                                      )
+                                    : 0
                                 return [searchPoints, extraPoints]
                             } finally {
                                 await closeMobileSession()
@@ -1066,7 +1153,9 @@ export class MicrosoftRewardsBot {
                         }
                         const desktopWork = async (): Promise<number> => {
                             try {
-                                return await this.searchManager.searchDesktop(account)
+                                return await this.performance.measure('search.desktop', () =>
+                                    this.searchManager.searchDesktop(account)
+                                )
                             } finally {
                                 await closeDesktopSession()
                             }
@@ -1076,8 +1165,14 @@ export class MicrosoftRewardsBot {
                     } else {
                         if (apiSearch) await closeMobileSession()
 
-                        if (doMobileSearch) mobilePoints = await this.searchManager.searchMobile(account)
-                        if (doBonus) bonusPoints = await this.searchManager.bonusMobile(account)
+                        if (doMobileSearch)
+                            mobilePoints = await this.performance.measure('search.mobile', () =>
+                                this.searchManager.searchMobile(account)
+                            )
+                        if (doBonus)
+                            bonusPoints = await this.performance.measure('search.bonus', () =>
+                                this.searchManager.bonusMobile(account)
+                            )
 
                         if (!apiSearch) await closeMobileSession()
 
@@ -1085,17 +1180,27 @@ export class MicrosoftRewardsBot {
                             await executionContext.run({ isMobile: false, account }, async () => {
                                 desktopSession = await this.createDesktopSession(account)
 
-                                if (this.config.workers.doPunchCards) await this.activities.doPunchCardsDesktop()
-                                if (doVisualSearch) await this.activities.doVisualSearch(data)
+                                if (this.config.workers.doPunchCards)
+                                    await this.performance.measure('activity.punchcards-desktop', () =>
+                                        this.activities.doPunchCardsDesktop()
+                                    )
+                                if (doVisualSearch)
+                                    await this.performance.measure('activity.visual-search', () =>
+                                        this.activities.doVisualSearch(data)
+                                    )
                                 if (doDesktopSearch && !apiSearch) {
-                                    desktopPoints = await this.searchManager.searchDesktop(account)
+                                    desktopPoints = await this.performance.measure('search.desktop', () =>
+                                        this.searchManager.searchDesktop(account)
+                                    )
                                 }
                             })
                             await closeDesktopSession()
                         }
 
                         if (doDesktopSearch && apiSearch) {
-                            desktopPoints = await this.searchManager.searchDesktop(account)
+                            desktopPoints = await this.performance.measure('search.desktop', () =>
+                                this.searchManager.searchDesktop(account)
+                            )
                         }
                     }
                 }
@@ -1110,23 +1215,21 @@ export class MicrosoftRewardsBot {
 
                 if (this.config.workers.doClaimBonusPoints) {
                     await this.gapBetweenWorkers()
-                    await this.activities.doClaimBonusPoints()
+                    await this.performance.measure('activity.claim-bonus', () => this.activities.doClaimBonusPoints())
                 }
 
                 if (edgeBrowsingTask) {
                     if (!edgeBrowsingFinished) {
-                        this.logger.info(
-                            this.isMobile,
-                            'EDGE-BROWSING',
-                            '前台活动已完成；正在等待后台 Edge 浏览活动'
-                        )
+                        this.logger.info(this.isMobile, 'EDGE-BROWSING', '前台活动已完成；正在等待后台 Edge 浏览活动')
                     }
                     await edgeBrowsingTask
                     edgeBrowsingTask = null
                 }
 
                 const finalAllPoints = await this.browser.func.getAllAccountPoints().catch(() => null)
-                const finalPoints = finalAllPoints ? finalAllPoints.availablePoints : await this.browser.func.getCurrentPoints()
+                const finalPoints = finalAllPoints
+                    ? finalAllPoints.availablePoints
+                    : await this.browser.func.getCurrentPoints()
                 const collectedPoints = Math.max(0, finalPoints - initialPoints)
 
                 if (finalAllPoints) {
@@ -1146,6 +1249,7 @@ export class MicrosoftRewardsBot {
 
                 return {
                     initialPoints,
+                    finalPoints,
                     collectedPoints
                 }
             })

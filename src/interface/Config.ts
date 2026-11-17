@@ -22,7 +22,15 @@ export interface Config {
     proxy: ConfigProxy
     consoleLogFilter: LogFilter
     webhook: ConfigWebhook
+    rewardGoal?: RewardGoalConfig
     humanize?: HumanizeConfig
+}
+
+export interface RewardGoalConfig {
+    name: string
+    faceValue: number
+    /** Actual redemption cost; null means unknown, not a conversion from faceValue. */
+    targetPoints: number | null
 }
 
 export interface HumanizeConfig {

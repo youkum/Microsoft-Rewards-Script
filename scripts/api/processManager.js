@@ -109,13 +109,15 @@ export class ProcessManager extends EventEmitter {
             this._emitStatus('running')
         })
 
+        let processError = null
         child.once('error', error => {
             const msg = error instanceof Error ? error.message : String(error)
             this._controllerLog('error', `Process error: ${msg}`)
-            this._finalize(null, null, msg)
+            processError = msg
         })
 
-        child.once('exit', (code, signal) => this._finalize(code, signal))
+        // close follows exit and the draining of both output streams.
+        child.once('close', (code, signal) => this._finalize(code, signal, processError))
 
         return { pid: this.pid, startedAt: this.startedAt, command: this.command, args }
     }
@@ -336,10 +338,13 @@ export class ProcessManager extends EventEmitter {
                     requestedAt: new Date().toISOString()
                 }
                 if (this._promptTimer) clearTimeout(this._promptTimer)
-                this._promptTimer = setTimeout(() => {
-                    this.currentPrompt = null
-                    this._emitStatus('prompt-timeout')
-                }, (this.currentPrompt.timeoutSeconds + 2) * 1000)
+                this._promptTimer = setTimeout(
+                    () => {
+                        this.currentPrompt = null
+                        this._emitStatus('prompt-timeout')
+                    },
+                    (this.currentPrompt.timeoutSeconds + 2) * 1000
+                )
                 if (typeof this._promptTimer.unref === 'function') this._promptTimer.unref()
 
                 this._controllerLog('warn', `[交互输入请求] ${this.currentPrompt.question}`)

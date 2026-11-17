@@ -32,6 +32,16 @@ export default tseslint.config(
             '@typescript-eslint/no-require-imports': 'off'
         }
     },
+    {
+        files: ['scripts/api/web/**/*.js'],
+        ignores: ['scripts/api/web/**/*.test.js'],
+        languageOptions: {
+            globals: {
+                ...Object.fromEntries(Object.keys(globals.node).map(name => [name, 'off'])),
+                ...globals.browser
+            }
+        }
+    },
     // Must come last: disables ESLint rules that conflict with Prettier formatting
     prettier
 )

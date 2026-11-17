@@ -116,7 +116,13 @@ export function readSchedule(projectRoot) {
     }
 }
 
-export function writeSchedule(projectRoot, patch) {
+// `apply` is a trusted, synchronous runtime dependency, never a request option.
+// Production callers use the default host crontab implementation.
+export function writeSchedule(projectRoot, patch, apply = applyCrontab) {
+    if (typeof apply !== 'function') throw new TypeError('Schedule apply callback must be a function.')
+    if (typeof patch !== 'object' || patch === null || Array.isArray(patch)) {
+        throw Object.assign(new Error('Schedule patch must be a JSON object.'), { code: 'BAD_REQUEST' })
+    }
     const current = readSchedule(projectRoot)
     const next = { ...current }
 
@@ -161,12 +167,49 @@ export function writeSchedule(projectRoot, patch) {
     delete next.source
 
     const file = scheduleFilePath(projectRoot)
-    fs.mkdirSync(path.dirname(file), { recursive: true })
+    const previousContents = fs.existsSync(file) ? fs.readFileSync(file) : null
     const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(next, null, 2))
-    fs.renameSync(tmp, file)
-
-    applyCrontab(next)
+    let saved = false
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true })
+        fs.writeFileSync(tmp, JSON.stringify(next, null, 2))
+        fs.renameSync(tmp, file)
+        saved = true
+        apply(next)
+    } catch (cause) {
+        const rollbackErrors = []
+        if (saved) {
+            try {
+                if (previousContents === null) {
+                    fs.rmSync(file, { force: true })
+                } else {
+                    fs.writeFileSync(tmp, previousContents)
+                    fs.renameSync(tmp, file)
+                }
+            } catch (error) {
+                rollbackErrors.push(`schedule file restore failed: ${error.message}`)
+            }
+        }
+        // Applying may have partially changed the host before failing. Attempt to
+        // restore its previous effective schedule even if file restoration failed.
+        try {
+            apply(current)
+        } catch (error) {
+            rollbackErrors.push(`previous cron restore failed: ${error.message}`)
+        }
+        const rollback = rollbackErrors.length
+            ? ` Rollback incomplete: ${rollbackErrors.join('; ')}.`
+            : ' Previous schedule restored.'
+        throw Object.assign(new Error(`Schedule update failed: ${cause.message || cause}.${rollback}`, { cause }), {
+            code: 'SCHEDULE_UPDATE_FAILED'
+        })
+    } finally {
+        try {
+            fs.rmSync(tmp, { force: true })
+        } catch {
+            // Preserve the original save/apply error if a temporary file is locked.
+        }
+    }
 
     return { ...next, source: 'override' }
 }

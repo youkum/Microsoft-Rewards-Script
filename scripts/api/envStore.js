@@ -11,6 +11,8 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
+import crypto from 'node:crypto'
+import { parseEnvContent, quoteEnvValue } from '../env.js'
 
 // Mirrors BROWSER_PROXY_PROTOCOLS in src/util/Proxy.ts (scripts/ cannot import TS).
 export const BROWSER_PROXY_PROTOCOLS = ['http:', 'https:', 'socks4:', 'socks5:']
@@ -21,29 +23,6 @@ const ACCOUNT_KEY_RE = /^ACCOUNT_(\d+)_([A-Z0-9_]+)$/
 // Parsing / serialization (format-compatible with lib.js loadEnvFile / Load.ts)
 // ---------------------------------------------------------------------------
 
-function parseEnvContent(raw) {
-    const pairs = []
-    for (const line of raw.split(/\r?\n/)) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#')) continue
-        const eq = trimmed.indexOf('=')
-        if (eq === -1) continue
-        const key = trimmed.slice(0, eq).trim()
-        let value = trimmed.slice(eq + 1).trim()
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1)
-        }
-        if (key) pairs.push({ key, value })
-    }
-    return pairs
-}
-
-function quoteValue(value) {
-    const str = String(value)
-    if (str === '' || /^[\w.@:/\-+,.;~()[\]]+$/.test(str)) return str
-    return `"${str.replace(/(["\\])/g, '\\$1')}"`
-}
-
 function serializePairs(pairs, header) {
     const lines = header ? [header, ''] : []
     let lastSlot = null
@@ -53,7 +32,7 @@ function serializePairs(pairs, header) {
             if (slot) lines.push(`# Account ${slot}`)
             lastSlot = slot
         }
-        lines.push(`${key}=${quoteValue(value)}`)
+        lines.push(`${key}=${quoteEnvValue(value)}`)
     }
     return lines.join('\n') + '\n'
 }
@@ -72,14 +51,32 @@ export function readEnvFile(filePath) {
 }
 
 function writeEnvFileAtomic(filePath, content) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
-    if (fs.existsSync(filePath)) {
-        const backup = `${filePath}.bak`
-        if (!fs.existsSync(backup)) fs.copyFileSync(filePath, backup)
+    fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o700 })
+    const backup = `${filePath}.bak`
+    for (const target of [filePath, backup]) {
+        try {
+            if (!fs.lstatSync(target).isFile()) throw new Error('Credential target must be a regular file.')
+            fs.chmodSync(target, 0o600)
+        } catch (err) {
+            if (err.code !== 'ENOENT') throw err
+        }
     }
-    const tmp = `${filePath}.tmp-${process.pid}-${Date.now()}`
-    fs.writeFileSync(tmp, content, 'utf-8')
-    fs.renameSync(tmp, filePath)
+    if (fs.existsSync(filePath) && !fs.existsSync(backup)) {
+        // Create with restrictive permissions before copying any secret bytes.
+        const fd = fs.openSync(backup, 'wx', 0o600)
+        try {
+            fs.writeFileSync(fd, fs.readFileSync(filePath))
+        } finally {
+            fs.closeSync(fd)
+        }
+    }
+    const tmp = `${filePath}.tmp-${process.pid}-${crypto.randomBytes(12).toString('hex')}`
+    try {
+        fs.writeFileSync(tmp, content, { encoding: 'utf-8', mode: 0o600, flag: 'wx' })
+        fs.renameSync(tmp, filePath)
+    } finally {
+        fs.rmSync(tmp, { force: true })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -128,7 +125,12 @@ export function getMergedAccountEnv(projectRoot, baseEnv = process.env) {
     for (const [key, value] of Object.entries(baseEnv)) {
         if (ACCOUNT_KEY_RE.test(key)) env[key] = value
     }
-    for (const { key, value } of loadAccountPairs(projectRoot)) env[key] = value
+    const pairs = loadAccountPairs(projectRoot)
+    const webSlots = new Set(pairs.filter(pair => pair.source === 'web').map(pair => ACCOUNT_KEY_RE.exec(pair.key)[1]))
+    for (const key of Object.keys(env)) {
+        if (webSlots.has(ACCOUNT_KEY_RE.exec(key)[1])) delete env[key]
+    }
+    for (const { key, value } of pairs) env[key] = value
     return env
 }
 
@@ -191,7 +193,7 @@ function accountFieldsToPairs(slot, fields) {
         if (value === undefined) continue
         if (value === null) continue
         if (typeof value === 'boolean') value = value ? 'true' : 'false'
-        value = String(value).trim()
+        value = ['password', 'proxyPassword'].includes(field) ? String(value) : String(value).trim()
         if (value === '') continue
         pairs.push({ key: `ACCOUNT_${slot}_${suffix}`, value })
     }
@@ -209,6 +211,7 @@ function writeAccountPairs(projectRoot, mutate) {
 
 // Add a new account in the lowest free slot. Returns the slot used.
 export function addAccount(projectRoot, fields, baseEnv = process.env) {
+    fields = validateAccountInput(fields)
     const email = fields.email.trim().toLowerCase()
     const merged = getMergedAccountEnv(projectRoot, baseEnv)
     for (const [key, value] of Object.entries(merged)) {
@@ -231,7 +234,7 @@ export function addAccount(projectRoot, fields, baseEnv = process.env) {
 
 // Replace every field of an existing WebUI-managed slot. Fields not present
 // in `fields` are preserved from the current merged env; empty strings clear.
-export function updateAccount(projectRoot, slot, fields, baseEnv = process.env) {
+export function updateAccount(projectRoot, slot, fields, baseEnv = process.env, clearFields = []) {
     const prefix = `ACCOUNT_${slot}_`
     writeAccountPairs(projectRoot, current => {
         if (!current.some(pair => pair.key === `${prefix}EMAIL`)) {
@@ -241,8 +244,10 @@ export function updateAccount(projectRoot, slot, fields, baseEnv = process.env) 
         }
         const merged = getMergedAccountEnv(projectRoot, baseEnv)
         const currentFields = fieldsFromEnv(merged, slot)
-        const full = { ...currentFields, ...fields }
-        const email = String(full.email ?? '').trim().toLowerCase()
+        const full = validateAccountInput(mergeAccountUpdate(currentFields, fields, clearFields))
+        const email = String(full.email ?? '')
+            .trim()
+            .toLowerCase()
         if (!email) {
             const err = new Error('email 字段不能为空。')
             err.code = 'BAD_REQUEST'
@@ -250,7 +255,12 @@ export function updateAccount(projectRoot, slot, fields, baseEnv = process.env) 
         }
         for (const [key, value] of Object.entries(merged)) {
             const match = ACCOUNT_KEY_RE.exec(key)
-            if (key.endsWith('_EMAIL') && match && match[1] !== String(slot) && String(value).trim().toLowerCase() === email) {
+            if (
+                key.endsWith('_EMAIL') &&
+                match &&
+                match[1] !== String(slot) &&
+                String(value).trim().toLowerCase() === email
+            ) {
                 const err = new Error(`该邮箱已存在于账号槽位 ACCOUNT_${match[1]}。`)
                 err.code = 'EMAIL_CONFLICT'
                 throw err
@@ -296,43 +306,115 @@ export function fieldsFromEnv(sourceEnv, slot) {
     const fields = {}
     for (const [field, suffix] of Object.entries(FIELD_TO_KEY)) {
         const value = sourceEnv[`ACCOUNT_${slot}_${suffix}`]
-        if (value !== undefined && String(value).trim() !== '') fields[field] = String(value).trim()
+        if (value !== undefined && String(value) !== '') {
+            fields[field] = ['password', 'proxyPassword'].includes(field) ? String(value) : String(value).trim()
+        }
     }
     return fields
 }
 
 // Flattens the WebUI JSON payload (nested proxy/saveFingerprint) into the
 // flat field shape used for validation and storage.
+function badRequest(message) {
+    return Object.assign(new Error(message), { code: 'BAD_REQUEST' })
+}
+
 export function flattenAccountPayload(input) {
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-        throw Object.assign(new Error('账号数据必须是 JSON 对象。'), { code: 'BAD_REQUEST' })
+        throw badRequest('账号数据必须是 JSON 对象。')
     }
     const flat = {}
-    for (const key of ['email', 'password', 'totpSecret', 'recoveryEmail', 'langCode', 'geoLocale']) {
-        if (input[key] !== undefined) flat[key] = input[key] === null ? '' : String(input[key])
+    function text(source, key, name = key) {
+        if (source[key] === undefined) return
+        if (source[key] !== null && typeof source[key] !== 'string') throw badRequest(`${name} must be a string.`)
+        flat[name] = source[key] ?? ''
     }
-    const proxy = input.proxy && typeof input.proxy === 'object' ? input.proxy : {}
+    for (const key of ['email', 'password', 'totpSecret', 'recoveryEmail', 'langCode', 'geoLocale']) text(input, key)
+    for (const key of ['proxy', 'saveFingerprint']) {
+        if (
+            input[key] !== undefined &&
+            (input[key] === null || typeof input[key] !== 'object' || Array.isArray(input[key]))
+        ) {
+            throw badRequest(`${key} must be an object.`)
+        }
+    }
+    const proxy = input.proxy ?? {}
     for (const [key, name] of [
         ['url', 'proxyUrl'],
         ['username', 'proxyUsername'],
         ['password', 'proxyPassword']
     ]) {
-        if (proxy[key] !== undefined) flat[name] = proxy[key] === null ? '' : String(proxy[key])
+        text(proxy, key, name)
     }
-    if (proxy.port !== undefined) flat.proxyPort = proxy.port === null || proxy.port === '' ? '' : proxy.port
-    if (proxy.http !== undefined) flat.proxyHttp = boolString(proxy.http) ?? ''
-    const fingerprint = input.saveFingerprint && typeof input.saveFingerprint === 'object' ? input.saveFingerprint : {}
-    if (fingerprint.mobile !== undefined) flat.saveFingerprintMobile = boolString(fingerprint.mobile) ?? ''
-    if (fingerprint.desktop !== undefined) flat.saveFingerprintDesktop = boolString(fingerprint.desktop) ?? ''
+    if (proxy.port !== undefined) {
+        if (proxy.port !== null && !['string', 'number'].includes(typeof proxy.port))
+            throw badRequest('proxy.port must be a number or string.')
+        flat.proxyPort = proxy.port ?? ''
+    }
+    function boolean(source, key, name) {
+        if (source[key] === undefined) return
+        const value = boolString(source[key])
+        if (value === undefined) throw badRequest(`${name} must be a boolean.`)
+        flat[name] = value
+    }
+    boolean(proxy, 'http', 'proxyHttp')
+    const fingerprint = input.saveFingerprint ?? {}
+    boolean(fingerprint, 'mobile', 'saveFingerprintMobile')
+    boolean(fingerprint, 'desktop', 'saveFingerprintDesktop')
     return flat
+}
+
+const CLEAR_FIELDS = {
+    password: ['password'],
+    totpSecret: ['totpSecret'],
+    recoveryEmail: ['recoveryEmail'],
+    proxy: ['proxyUrl', 'proxyPort', 'proxyHttp', 'proxyUsername', 'proxyPassword'],
+    'proxy.username': ['proxyUsername'],
+    'proxy.password': ['proxyPassword']
+}
+
+export function mergeAccountUpdate(current, fields, clearFields = []) {
+    if (
+        !Array.isArray(clearFields) ||
+        clearFields.some(key => typeof key !== 'string' || !Object.hasOwn(CLEAR_FIELDS, key))
+    ) {
+        throw badRequest('clearFields must be an array of supported field names.')
+    }
+    if (
+        new Set(clearFields).size !== clearFields.length ||
+        (clearFields.includes('proxy') && clearFields.some(key => key.startsWith('proxy.')))
+    ) {
+        throw badRequest('clearFields contains conflicting fields.')
+    }
+    const patch = { ...fields }
+    const preserved = ['password', 'totpSecret', 'recoveryEmail', 'proxyUrl', 'proxyUsername', 'proxyPassword']
+    for (const field of preserved) {
+        if (patch[field] === '') delete patch[field]
+    }
+    const full = { ...current, ...patch }
+    for (const key of clearFields) {
+        for (const field of CLEAR_FIELDS[key]) {
+            if (Object.hasOwn(fields, field) && fields[field] !== '' && fields[field] !== null) {
+                throw badRequest(`Cannot set and clear ${key} in the same request.`)
+            }
+            full[field] = ''
+        }
+    }
+    return full
 }
 
 // Normalizes + validates flat account fields; throws Error with `code`.
 export function validateAccountInput(fields) {
     const errors = []
     const out = {}
+    for (const [key, value] of Object.entries(fields)) {
+        if (typeof value === 'string' && (/[\r\n]/.test(value) || value.includes('\0')))
+            errors.push(`${key} must not contain newline or NUL characters.`)
+    }
 
-    const email = String(fields.email ?? '').trim().toLowerCase()
+    const email = String(fields.email ?? '')
+        .trim()
+        .toLowerCase()
     if (!email || email.length > 320 || !EMAIL_RE.test(email) || email.includes('..')) {
         errors.push('email 必须是合法邮箱地址。')
     } else {
@@ -343,7 +425,10 @@ export function validateAccountInput(fields) {
     if (password.length > 512) errors.push('password 过长(最多 512 字符)。')
     else out.password = password
 
-    const totp = String(fields.totpSecret ?? '').trim().replace(/\s+/g, '').toUpperCase()
+    const totp = String(fields.totpSecret ?? '')
+        .trim()
+        .replace(/\s+/g, '')
+        .toUpperCase()
     if (totp) {
         if (!BASE32_RE.test(totp) || totp.length < 16) errors.push('totpSecret 必须是 Base32 密钥(≥16 位 A-Z2-7)。')
         else out.totpSecret = totp
@@ -370,7 +455,9 @@ export function validateAccountInput(fields) {
         out.langCode = ''
     }
 
-    const geo = String(fields.geoLocale ?? '').trim().toLowerCase()
+    const geo = String(fields.geoLocale ?? '')
+        .trim()
+        .toLowerCase()
     if (geo) {
         if (geo === 'auto') out.geoLocale = 'auto'
         else if (!/^[a-z]{2}$/.test(geo)) errors.push('geoLocale 必须是两位国家代码或 auto。')
@@ -392,11 +479,14 @@ export function validateAccountInput(fields) {
                 errors.push(
                     `proxy.url 协议必须是 ${BROWSER_PROXY_PROTOCOLS.map(p => p.slice(0, -1)).join('/')}(裸主机名按 http 处理)。`
                 )
+            } else if (parsed.username || parsed.password) {
+                errors.push('proxy.url must not contain embedded credentials; use username/password fields.')
             } else if (!parsed.hostname) {
                 errors.push('proxy.url 缺少主机名。')
             } else {
                 out.proxyUrl = `${parsed.protocol}//${parsed.hostname}`
-                const port = fields.proxyPort == null || fields.proxyPort === '' ? parsed.port : Number(fields.proxyPort)
+                const port =
+                    fields.proxyPort == null || fields.proxyPort === '' ? parsed.port : Number(fields.proxyPort)
                 if (port === '' || port == null) {
                     // no explicit port and none in URL
                 } else if (!Number.isSafeInteger(Number(port)) || Number(port) < 1 || Number(port) > 65535) {
@@ -414,8 +504,12 @@ export function validateAccountInput(fields) {
                 errors.push('SOCKS 代理不支持账号认证(浏览器限制),请改用 HTTP(S) 代理或免认证 SOCKS。')
             } else out.proxyUsername = username
         }
+        if (Boolean(username) !== Boolean(passwordP))
+            errors.push('Proxy username and password must be configured together.')
         if (passwordP) out.proxyPassword = passwordP
         out.proxyHttp = boolString(fields.proxyHttp) ?? 'false'
+    } else if (fields.proxyUsername || fields.proxyPassword || fields.proxyPort || fields.proxyHttp === 'true') {
+        errors.push('Proxy options require proxy.url.')
     } else if ('proxyUrl' in fields) {
         // explicit clear: drop the whole proxy block
         out.proxyUrl = ''

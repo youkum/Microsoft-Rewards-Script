@@ -19,12 +19,12 @@ export function appendRunRecord(projectRoot, record) {
     const filePath = pointsHistoryFilePath(projectRoot)
     fs.mkdirSync(path.dirname(filePath), { recursive: true })
     try {
-        const stat = fs.statSync(filePath)
-        if (stat.size > MAX_FILE_BYTES) {
+        if (fs.statSync(filePath).size > MAX_FILE_BYTES) {
+            fs.rmSync(`${filePath}.1`, { force: true })
             fs.renameSync(filePath, `${filePath}.1`)
         }
-    } catch {
-        // missing file is fine
+    } catch (err) {
+        if (err.code !== 'ENOENT') throw err
     }
     fs.appendFileSync(filePath, JSON.stringify(record) + '\n', 'utf-8')
 }
@@ -56,7 +56,12 @@ function toLocalDateStr(when) {
     if (isNaN(d.getTime())) return String(when).slice(0, 10)
     const tz = process.env.TZ || 'Asia/Shanghai'
     try {
-        return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d)
+        return new Intl.DateTimeFormat('en-CA', {
+            timeZone: tz,
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).format(d)
     } catch {
         return d.toISOString().slice(0, 10)
     }
@@ -69,7 +74,7 @@ export function readPointsHistory(projectRoot, { days = 30, limit = 200 } = {}) 
     const filePath = pointsHistoryFilePath(projectRoot)
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
 
-    const records = readRecords(filePath)
+    const records = [...readRecords(`${filePath}.1`), ...readRecords(filePath)]
         .filter(record => {
             const when = Date.parse(record.endedAt || record.startedAt || '')
             return Number.isFinite(when) ? when >= cutoff : true
@@ -101,9 +106,15 @@ export function readPointsHistory(projectRoot, { days = 30, limit = 200 } = {}) 
 
         for (const account of record.accounts ?? []) {
             if (!account?.email) continue
-            const entry =
-                perAccount.get(account.email) ??
-                { email: account.email, runs: 0, totalCollected: 0, successes: 0, lastCollected: null, lastRunAt: null, lastBalance: null }
+            const entry = perAccount.get(account.email) ?? {
+                email: account.email,
+                runs: 0,
+                totalCollected: 0,
+                successes: 0,
+                lastCollected: null,
+                lastRunAt: null,
+                lastBalance: null
+            }
             entry.runs++
             entry.totalCollected += Number(account.collected ?? 0) || 0
             if (account.success === true) entry.successes++

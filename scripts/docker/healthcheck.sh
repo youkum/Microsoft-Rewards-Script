@@ -1,9 +1,10 @@
 #!/usr/bin/env sh
 set -eu
 
+# Cron runs in both modes, including API startup without an enabled schedule.
+pgrep -x cron >/dev/null 2>&1 || exit 1
 if [ "${API_MODE:-false}" != "true" ]; then
-    pgrep -x cron >/dev/null 2>&1
-    exit $?
+    exit 0
 fi
 
 node --input-type=module <<'NODE'

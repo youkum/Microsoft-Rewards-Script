@@ -201,6 +201,13 @@ export const ConfigSchema = z.object({
     }),
     consoleLogFilter: LogFilterSchema,
     webhook: WebhookSchema,
+    rewardGoal: z
+        .object({
+            name: z.string().trim().min(1).max(200).default('100元礼品卡'),
+            faceValue: z.number().finite().positive().default(100),
+            targetPoints: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable().default(null)
+        })
+        .default({ name: '100元礼品卡', faceValue: 100, targetPoints: null }),
     humanize: HumanizeSchema.optional()
 })
 

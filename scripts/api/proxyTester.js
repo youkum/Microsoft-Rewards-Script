@@ -19,7 +19,12 @@ const IP_ECHO_TARGETS = [
         parse: body => {
             const data = JSON.parse(body)
             if (!data.query) throw new Error('unexpected payload')
-            return { ip: data.query, country: data.country ?? null, countryCode: data.countryCode ?? null, timezone: data.timezone ?? null }
+            return {
+                ip: data.query,
+                country: data.country ?? null,
+                countryCode: data.countryCode ?? null,
+                timezone: data.timezone ?? null
+            }
         }
     },
     {
@@ -35,11 +40,15 @@ const IP_ECHO_TARGETS = [
 function buildAgent(proxy) {
     const scheme = proxy.protocol.toLowerCase()
     const credentials =
-        proxy.username && proxy.password ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@` : ''
+        proxy.username && proxy.password
+            ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password)}@`
+            : ''
 
     if (scheme === 'socks4:' || scheme === 'socks5:') {
         if (credentials) {
-            const err = new Error('SOCKS 代理不支持账号认证(浏览器/Patchright 限制),请改用免认证 SOCKS 或 HTTP(S) 代理。')
+            const err = new Error(
+                'SOCKS 代理不支持账号认证(浏览器/Patchright 限制),请改用免认证 SOCKS 或 HTTP(S) 代理。'
+            )
             err.code = 'SOCKS_AUTH_UNSUPPORTED'
             throw err
         }
@@ -57,7 +66,12 @@ function requestVia(agent, targetUrl, timeoutMs) {
         const mod = targetUrl.startsWith('https:') ? https : http
         const req = mod.request(
             targetUrl,
-            { agent, method: 'GET', timeout: timeoutMs, headers: { 'user-agent': 'mrs-proxy-tester/1.0', accept: 'application/json' } },
+            {
+                agent,
+                method: 'GET',
+                timeout: timeoutMs,
+                headers: { 'user-agent': 'mrs-proxy-tester/1.0', accept: 'application/json' }
+            },
             res => {
                 const chunks = []
                 res.on('data', chunk => {
@@ -84,8 +98,14 @@ function withHardTimeout(promise, timeoutMs, label) {
     return new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`${label} 超时(${timeoutMs}ms)。`)), timeoutMs + 2000)
         promise.then(
-            value => { clearTimeout(timer); resolve(value) },
-            err => { clearTimeout(timer); reject(err) }
+            value => {
+                clearTimeout(timer)
+                resolve(value)
+            },
+            err => {
+                clearTimeout(timer)
+                reject(err)
+            }
         )
     })
 }
@@ -106,7 +126,9 @@ export async function testProxy({ url, port, username, password, timeoutMs = 10_
     const proxy = {
         protocol: parsed.protocol,
         hostname: parsed.hostname,
-        port: port ?? (parsed.port || (parsed.protocol === 'https:' ? 443 : parsed.protocol.startsWith('socks') ? 1080 : 80)),
+        port:
+            port ??
+            (parsed.port || (parsed.protocol === 'https:' ? 443 : parsed.protocol.startsWith('socks') ? 1080 : 80)),
         username: username ?? '',
         password: password ?? ''
     }

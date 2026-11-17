@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { assertNoRedactionPlaceholders } from './lib.js'
 
 function resolveConfigPath(projectRoot) {
     const candidates = [
@@ -169,6 +170,25 @@ function structuralValidate(cfg) {
             }
         }
     }
+    if ('rewardGoal' in cfg) {
+        const goal = cfg.rewardGoal
+        if (!isObject(goal)) errors.push('rewardGoal must be an object')
+        else {
+            if ('name' in goal && (typeof goal.name !== 'string' || !goal.name.trim() || goal.name.length > 100))
+                errors.push('rewardGoal.name must be a nonempty string of at most 100 characters')
+            if (
+                'faceValue' in goal &&
+                (typeof goal.faceValue !== 'number' || !Number.isFinite(goal.faceValue) || goal.faceValue <= 0)
+            )
+                errors.push('rewardGoal.faceValue must be positive')
+            if (
+                'targetPoints' in goal &&
+                goal.targetPoints !== null &&
+                (!Number.isSafeInteger(goal.targetPoints) || goal.targetPoints <= 0)
+            )
+                errors.push('rewardGoal.targetPoints must be a positive safe integer or null')
+        }
+    }
     if ('consoleLogFilter' in cfg) validateLogFilter(cfg.consoleLogFilter, 'consoleLogFilter', errors)
     if ('webhook' in cfg) {
         if (!isObject(cfg.webhook)) {
@@ -177,10 +197,21 @@ function structuralValidate(cfg) {
             if ('webhookLogFilter' in cfg.webhook) {
                 validateLogFilter(cfg.webhook.webhookLogFilter, 'webhook.webhookLogFilter', errors)
             }
-            for (const key of ['discord', 'ntfy', 'telegram']) {
+            for (const key of ['discord', 'ntfy', 'telegram', 'pushplus']) {
                 if (key in cfg.webhook && !isObject(cfg.webhook[key])) {
                     errors.push(`webhook.${key} must be an object`)
                 }
+            }
+            if (isObject(cfg.webhook.pushplus)) {
+                const pushplus = cfg.webhook.pushplus
+                if ('enabled' in pushplus && typeof pushplus.enabled !== 'boolean')
+                    errors.push('webhook.pushplus.enabled must be boolean')
+                for (const key of ['token', 'title', 'channel']) {
+                    if (key in pushplus && typeof pushplus[key] !== 'string')
+                        errors.push(`webhook.pushplus.${key} must be a string`)
+                }
+                if ('template' in pushplus && !['txt', 'html', 'markdown'].includes(pushplus.template))
+                    errors.push('webhook.pushplus.template must be txt, html, or markdown')
             }
         }
     }
@@ -254,6 +285,7 @@ export function readConfig(projectRoot) {
 }
 
 export function writeConfigAtomic(projectRoot, cfg) {
+    assertNoRedactionPlaceholders(cfg)
     const target = resolveConfigPath(projectRoot)
     if (fs.existsSync(target)) {
         try {

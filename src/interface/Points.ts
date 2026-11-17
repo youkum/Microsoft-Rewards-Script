@@ -40,4 +40,3 @@ export interface AccountAllPointsSummary {
     streakProtection: boolean
     streakProtectionDays: number
 }
-

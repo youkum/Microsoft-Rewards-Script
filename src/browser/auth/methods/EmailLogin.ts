@@ -60,7 +60,11 @@ export class EmailLogin {
                 if (await el.isVisible({ timeout: 300 }).catch(() => false)) {
                     const clicked = await this.bot.browser.utils.ghostClick(page, selector).catch(() => false)
                     if (clicked) {
-                        this.bot.logger.debug(this.bot.isMobile, contextLabel, `通过 ghostClick 点击提交按钮: ${selector}`)
+                        this.bot.logger.debug(
+                            this.bot.isMobile,
+                            contextLabel,
+                            `通过 ghostClick 点击提交按钮: ${selector}`
+                        )
                         return true
                     }
                     await el.click({ timeout: 2000 }).catch(() => {})

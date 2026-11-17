@@ -24,19 +24,21 @@ services:
             # CRON_SCHEDULE is the *initial* default. It will run as default unless changed by the API
             # API schedule changes are saved to ./config/schedule.json, delete
             # that file to revert to the base CRON_SCHEDULE again.
-            CRON_SCHEDULE: '0 7 * * *' # use crontab.guru to customize your schedule
-            RUN_ON_START: 'true' # run script immediately on container start
+            CRON_SCHEDULE: '${CRON_SCHEDULE:-}' # configure later from the dashboard
+            RUN_ON_START: 'false' # manual-first; no reward task on startup
             SKIP_RANDOM_SLEEP: 'false'
             #MIN_SLEEP_MINUTES: "5"
             #MAX_SLEEP_MINUTES: "50"
             #STUCK_PROCESS_TIMEOUT_HOURS: "8"
 
             # ── API mode + 内嵌 WebUI 控制面板 ──────────────────
-            # API_MODE=true 时容器内启动控制 API + 内嵌 WebUI（浏览器打开 http://<服务器IP>:8890）
+            # API_MODE=true 时启动 API + WebUI（默认仅本机 http://127.0.0.1:8890）
             # 面板登录账号在 .env 中配置：DASHBOARD_USERNAME / DASHBOARD_PASSWORD
             API_MODE: 'true'
-            # 可选：外部工具用 API_TOKEN 走 Bearer 认证（面板用不到）
-            #API_TOKEN: '${API_TOKEN}'
+            API_HOST: '0.0.0.0' # bind inside container; host publication is loopback below
+            API_PORT: '3010'
+            # Required for container API, cron trigger, and healthcheck authentication.
+            API_TOKEN: '${API_TOKEN:?Set a long random API_TOKEN in .env}'
             # 面板写能力的独立开关（已开启账号、行为配置与调度写权限）
             API_ALLOW_ACCOUNT_WRITE: 'true'
             API_ALLOW_CONFIG_WRITE: 'true'
@@ -80,9 +82,9 @@ services:
             #CONFIG_CLAWBOT_AUTHFILE: ''             # 凭证路径，默认项目根 clawbot-auth.json
 
         # ── 内嵌 WebUI 面板端口映射（API_MODE=true 时生效）──────────────
-        # 浏览器访问 http://<服务器IP>:8890
+        # Default: http://127.0.0.1:8890; use an SSH tunnel/reverse proxy remotely.
         ports:
-            - '8890:3010'
+            - '${API_BIND_ADDRESS:-127.0.0.1}:8890:3010'
 
         healthcheck:
             test: ['CMD-SHELL', 'scripts/docker/healthcheck.sh']

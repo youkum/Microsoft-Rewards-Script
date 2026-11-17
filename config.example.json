@@ -40,10 +40,7 @@
         "maxBonusSearches": 110,
         "parallelSearching": false,
         "clusterSearch": true,
-        "queryEngines": [
-            "china",
-            "local"
-        ],
+        "queryEngines": ["china", "local"],
         "searchResultVisitTime": "20sec",
         "searchDelay": {
             "min": "6min",
@@ -117,6 +114,11 @@
             "keywords": ["starting account", "select number", "collected", "Fraud_UserWarning_BotScore_UX"],
             "regexPatterns": []
         }
+    },
+    "rewardGoal": {
+        "name": "100元礼品卡",
+        "faceValue": 100,
+        "targetPoints": null
     },
     "humanize": {
         "enabled": false,

@@ -51,7 +51,7 @@ export class Search extends BaseActivity {
             )
             return stats.totalGained
         } finally {
-            await page.goto(URLs.bing.origin).catch(() => {})
+            await this.bot.performance.measure('navigation', () => page.goto(URLs.bing.origin)).catch(() => {})
         }
     }
 
@@ -85,6 +85,8 @@ export class Search extends BaseActivity {
 
     private async runSearchSession(page: Page, isMobile: boolean, tracker: SearchTracker): Promise<SessionStats> {
         const stats: SessionStats = { totalGained: 0, performed: 0, stagnant: 0 }
+        const finish = this.bot.performance.start('search.session')
+        let failed = false
 
         try {
             const ready = await tracker.prepare()
@@ -103,7 +105,7 @@ export class Search extends BaseActivity {
             )
 
             await this.bot.browser.func.synchronizeActiveBrowserCookies('SEARCH-COOKIE-SEED', true)
-            await page.goto(URLs.bing.origin)
+            await this.bot.performance.measure('navigation', () => page.goto(URLs.bing.origin))
             await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {})
             await this.bot.browser.utils.tryDismissAllMessages(page)
 
@@ -119,7 +121,7 @@ export class Search extends BaseActivity {
                 stats.performed++
 
                 await this.bot.browser.func.synchronizeActiveBrowserCookies('SEARCH-COOKIE-CAPTURE')
-                const gained = await tracker.measure()
+                const gained = await this.bot.performance.measure('progress.measure', () => tracker.measure())
                 if (gained > 0) {
                     stats.stagnant = 0
                     stats.totalGained += gained
@@ -141,19 +143,26 @@ export class Search extends BaseActivity {
 
             return stats
         } catch (error) {
+            failed = true
             this.bot.logger.error(
                 isMobile,
                 tracker.context,
                 `搜索会话出错 | ${error instanceof Error ? error.message : String(error)}`
             )
             return stats
+        } finally {
+            finish(failed)
         }
     }
     private async bingSearch(page: Page, query: string, isMobile: boolean): Promise<void> {
+        return this.bot.performance.measure('search.query', () => this.performBingSearch(page, query, isMobile))
+    }
+
+    private async performBingSearch(page: Page, query: string, isMobile: boolean): Promise<void> {
         this.searchCount++
 
         if (this.searchCount % REFRESH_EVERY === 0) {
-            await page.goto(URLs.bing.origin)
+            await this.bot.performance.measure('navigation', () => page.goto(URLs.bing.origin))
             await page.waitForLoadState('domcontentloaded', { timeout: 8000 }).catch(() => {})
             await this.bot.browser.utils.tryDismissAllMessages(page)
         }
@@ -225,7 +234,7 @@ export class Search extends BaseActivity {
             await this.bot.utils.wait(this.bot.config.searchSettings.searchResultVisitTime)
 
             if (isMobile) {
-                await page.goto(searchPageUrl)
+                await this.bot.performance.measure('navigation', () => page.goto(searchPageUrl))
             } else {
                 const newTab = await this.bot.browser.utils.getLatestTab(page)
                 await this.bot.browser.utils.closeTabs(newTab)
@@ -281,18 +290,10 @@ class PointsTracker implements SearchTracker {
 
         if (this.missing.totalPoints <= 0) {
             if (!this.runOnZeroPoints) {
-                this.bot.logger.info(
-                    this.isMobile,
-                    this.context,
-                    '无可赚搜索积分，跳过（runOnZeroPoints 已禁用）'
-                )
+                this.bot.logger.info(this.isMobile, this.context, '无可赚搜索积分，跳过（runOnZeroPoints 已禁用）')
                 return false
             }
-            this.bot.logger.info(
-                this.isMobile,
-                this.context,
-                '未报告搜索积分，但 runOnZeroPoints 已启用，仍继续搜索'
-            )
+            this.bot.logger.info(this.isMobile, this.context, '未报告搜索积分，但 runOnZeroPoints 已启用，仍继续搜索')
         }
         return true
     }

@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { parseEnvContent } from '../env.js'
 
 export { envBool, envInt, envStr } from '../env.js'
 
@@ -79,16 +80,7 @@ export function loadEnvFile(projectRoot) {
     if (!envFile) return null
 
     const raw = fs.readFileSync(envFile, 'utf8')
-    for (const line of raw.split(/\r?\n/)) {
-        const trimmed = line.trim()
-        if (!trimmed || trimmed.startsWith('#')) continue
-        const eq = trimmed.indexOf('=')
-        if (eq === -1) continue
-        const key = trimmed.slice(0, eq).trim()
-        let value = trimmed.slice(eq + 1).trim()
-        if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
-            value = value.slice(1, -1)
-        }
+    for (const { key, value } of parseEnvContent(raw)) {
         if (process.env[key] === undefined) process.env[key] = value
     }
     return envFile
@@ -112,17 +104,36 @@ export function loadConfigSafe(projectRoot) {
     return null
 }
 
+export const REDACTION_PLACEHOLDER = '***REDACTED***'
+
 export function redactSecrets(config) {
-    if (!config || typeof config !== 'object') return config
-    const clone = structuredClone(config)
-    const mask = '***REDACTED***'
-    const wh = clone.webhook
-    if (wh && typeof wh === 'object') {
-        if (wh.discord?.url) wh.discord.url = mask
-        if (wh.ntfy?.url) wh.ntfy.url = mask
-        if (wh.ntfy?.token) wh.ntfy.token = mask
-        if (wh.telegram?.botToken) wh.telegram.botToken = mask
-        if (wh.telegram?.chatId) wh.telegram.chatId = mask
+    function visit(value, parents = []) {
+        if (!value || typeof value !== 'object') return value
+        if (Array.isArray(value)) return value.map(item => visit(item, parents))
+        return Object.fromEntries(
+            Object.entries(value).map(([key, item]) => {
+                const name = key.replace(/[_-]/g, '').toLowerCase()
+                const credential =
+                    /password|secret|token|apikey|appkey|sendkey|authorization|credential/.test(name) ||
+                    ['username', 'recoveryemail', 'chatid'].includes(name) ||
+                    (parents.includes('webhook') && ['url', 'topic'].includes(name))
+                return [key, credential && item ? REDACTION_PLACEHOLDER : visit(item, [...parents, key])]
+            })
+        )
     }
-    return clone
+    return visit(config)
+}
+
+export function assertNoRedactionPlaceholders(value) {
+    if (typeof value === 'string' && value.includes(REDACTION_PLACEHOLDER)) {
+        throw Object.assign(
+            new Error('Redacted config cannot be saved. Supply real secret values or omit secret fields in a PATCH.'),
+            {
+                code: 'BAD_REQUEST'
+            }
+        )
+    }
+    if (value && typeof value === 'object') {
+        for (const item of Object.values(value)) assertNoRedactionPlaceholders(item)
+    }
 }

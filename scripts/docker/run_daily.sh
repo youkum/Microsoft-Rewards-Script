@@ -18,6 +18,8 @@ export TZ="${TZ:-UTC}"
 
 cd /usr/src/microsoft-rewards-script
 
+# Keep a stable inode: unlinking an active flock file permits a second owner.
+# PID text is diagnostic only; kernel ownership is released on process death.
 LOCKFILE=/tmp/run_daily.lock
 
 is_positive_integer() {
@@ -28,142 +30,39 @@ is_nonnegative_integer() {
     [[ "$1" =~ ^[0-9]+$ ]]
 }
 
-is_run_daily_process() {
-    local pid="$1"
-    [ -r "/proc/$pid/cmdline" ] || return 1
-    tr '\0' ' ' < "/proc/$pid/cmdline" | grep -q 'scripts/docker/run_daily\.sh'
-}
+TIMEOUT_HOURS=${STUCK_PROCESS_TIMEOUT_HOURS:-8}
+if ! is_positive_integer "$TIMEOUT_HOURS" || [ "${#TIMEOUT_HOURS}" -gt 4 ] || [ "$TIMEOUT_HOURS" -gt 8760 ]; then
+    echo "[run_daily.sh] ERROR: STUCK_PROCESS_TIMEOUT_HOURS must be an integer from 1 to 8760." >&2
+    exit 1
+fi
 
-self_heal_lockfile() {
-    # If lockfile exists but is empty → remove it
-    if [ -f "$LOCKFILE" ]; then
-        local lock_content
-        lock_content=$(<"$LOCKFILE" || echo "")
-
-        if [[ -z "$lock_content" ]]; then
-            echo "[$(date)] [run_daily.sh] Found empty lockfile → removing."
-            rm -f "$LOCKFILE"
-            return
-        fi
-
-        # If lockfile contains non-numeric PID → remove it
-        if ! [[ "$lock_content" =~ ^[0-9]+$ ]]; then
-            echo "[$(date)] [run_daily.sh] Found corrupted lockfile content ('$lock_content') → removing."
-            rm -f "$LOCKFILE"
-            return
-        fi
-
-        # If lockfile contains PID but process is dead → remove it
-        if ! kill -0 "$lock_content" 2>/dev/null; then
-            echo "[$(date)] [run_daily.sh] Lockfile PID $lock_content is dead → removing stale lock."
-            rm -f "$LOCKFILE"
-            return
-        fi
-
-        if ! is_run_daily_process "$lock_content"; then
-            echo "[$(date)] [run_daily.sh] Lockfile PID $lock_content is not run_daily.sh → removing stale lock."
-            rm -f "$LOCKFILE"
-        fi
-    fi
-}
-
-acquire_lock() {
-    local max_attempts=5
-    local attempt=0
-    local timeout_hours=${STUCK_PROCESS_TIMEOUT_HOURS:-8}
-    local timeout_seconds
-    local existing_pid="unknown"
-
-    if ! is_positive_integer "$timeout_hours"; then
-        echo "[$(date)] [run_daily.sh] ERROR: STUCK_PROCESS_TIMEOUT_HOURS must be a positive integer." >&2
-        return 2
-    fi
-    timeout_seconds=$((timeout_hours * 3600))
-
-    while [ $attempt -lt $max_attempts ]; do
-        attempt=$((attempt + 1))
-        # Try to create lock with current PID
-        if (set -C; echo "$$" > "$LOCKFILE") 2>/dev/null; then
-            echo "[$(date)] [run_daily.sh] Lock acquired successfully (PID: $$)"
-            return 0
-        fi
-
-        # Lock exists, validate it
-        if [ -f "$LOCKFILE" ]; then
-            existing_pid=$(<"$LOCKFILE" || echo "")
-
-            echo "[$(date)] [run_daily.sh] Lock file exists with PID: '$existing_pid'"
-
-            # If lockfile content is invalid → delete and retry
-            if [[ -z "$existing_pid" || ! "$existing_pid" =~ ^[0-9]+$ ]]; then
-                echo "[$(date)] [run_daily.sh] Removing invalid lockfile → retrying..."
-                rm -f "$LOCKFILE"
-                continue
-            fi
-
-            # If process is dead → delete and retry
-            if ! kill -0 "$existing_pid" 2>/dev/null; then
-                echo "[$(date)] [run_daily.sh] Removing stale lock (dead PID: $existing_pid)"
-                rm -f "$LOCKFILE"
-                continue
-            fi
-
-            if ! is_run_daily_process "$existing_pid"; then
-                echo "[$(date)] [run_daily.sh] Removing stale lock owned by unrelated PID $existing_pid"
-                rm -f "$LOCKFILE"
-                continue
-            fi
-
-            # Check process runtime → kill if exceeded timeout
-            local process_age
-            if process_age=$(ps -o etimes= -p "$existing_pid" 2>/dev/null | tr -d ' '); then
-                if [ "$process_age" -gt "$timeout_seconds" ]; then
-                    echo "[$(date)] [run_daily.sh] Killing stuck process $existing_pid (${process_age}s > ${timeout_hours}h)"
-                    kill -TERM "$existing_pid" 2>/dev/null || true
-                    sleep 5
-                    kill -KILL "$existing_pid" 2>/dev/null || true
-                    rm -f "$LOCKFILE"
-                    continue
-                fi
-            fi
-        fi
-
-        echo "[$(date)] [run_daily.sh] Lock held by PID $existing_pid, attempt $attempt/$max_attempts"
-        sleep 2
-    done
-
-    echo "[$(date)] [run_daily.sh] Could not acquire lock after $max_attempts attempts; exiting."
-    return 1
-}
-
-release_lock() {
-    if [ -f "$LOCKFILE" ]; then
-        local lock_pid
-        lock_pid=$(<"$LOCKFILE")
-        if [ "$lock_pid" = "$$" ]; then
-            rm -f "$LOCKFILE"
-            echo "[$(date)] [run_daily.sh] Lock released (PID: $$)"
-        fi
-    fi
-}
-
-# Always release the lock on exit, including interrupt/termination paths.
-trap release_lock EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
-
-echo "[$(date)] [run_daily.sh] Current process PID: $$"
-
-# Self-heal any broken or empty locks before proceeding
-self_heal_lockfile
-
-if acquire_lock; then
-    :
+exec 9>>"$LOCKFILE"
+if flock -n -E 75 9; then
+    printf '%s\n' "$$" > "$LOCKFILE"
 else
     lock_status=$?
-    [ "$lock_status" -eq 2 ] && exit 1
-    exit 0
+    if [ "$lock_status" -eq 75 ]; then
+        existing_pid=$(cat "$LOCKFILE" 2>/dev/null || true)
+        echo "[run_daily.sh] Another run owns the lock (PID: ${existing_pid:-initializing}); skipping."
+        exit 0
+    fi
+    echo "[run_daily.sh] ERROR: Unable to acquire the run lock." >&2
+    exit "$lock_status"
 fi
+
+child_pid=''
+cleanup() {
+    trap - EXIT INT TERM
+    if [ -n "$child_pid" ]; then
+        kill -TERM "$child_pid" 2>/dev/null || true
+        wait "$child_pid" 2>/dev/null || true
+    fi
+    # Do not unlink or explicitly unlock: descendants retain the same lock until
+    # the task is gone, even if this wrapper is killed before it can clean up.
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 # Random sleep between MIN and MAX to spread execution
 MINWAIT=${MIN_SLEEP_MINUTES:-5}
@@ -188,30 +87,26 @@ if [ "${SKIP_RANDOM_SLEEP:-false}" != "true" ]; then
         SLEEPTIME=$((MINWAIT_SEC + RANDOM % (MAXWAIT_SEC - MINWAIT_SEC + 1)))
     fi
     echo "[$(date)] [run_daily.sh] Sleeping for $((SLEEPTIME/60)) minutes ($SLEEPTIME seconds)"
-    sleep "$SLEEPTIME"
+    # Run sleep as a child so termination interrupts the wrapper promptly.
+    sleep "$SLEEPTIME" &
+    child_pid=$!
+    wait "$child_pid"
+    child_pid=''
 else
     echo "[$(date)] [run_daily.sh] Skipping random sleep"
 fi
 
-# Start the actual script
+# GNU timeout bounds the actual task's process group. Never kill a PID read
+# from a stale file: that PID may have been reused by an unrelated process.
 echo "[$(date)] [run_daily.sh] Starting script..."
-run_status=0
 if [ "${API_MODE:-false}" = "true" ]; then
-    if node scripts/api/trigger.js; then
-        echo "[$(date)] [run_daily.sh] Script completed successfully (via API)."
-    else
-        echo "[$(date)] [run_daily.sh] ERROR: Script failed (via API)!" >&2
-        run_status=1
-    fi
+    timeout --signal=TERM --kill-after=30s "${TIMEOUT_HOURS}h" node scripts/api/trigger.js &
 else
-    if npm start; then
-        echo "[$(date)] [run_daily.sh] Script completed successfully."
-    else
-        echo "[$(date)] [run_daily.sh] ERROR: Script failed!" >&2
-        run_status=1
-    fi
+    timeout --signal=TERM --kill-after=30s "${TIMEOUT_HOURS}h" npm start &
 fi
-
-echo "[$(date)] [run_daily.sh] Script finished"
-# Lock is released automatically via trap
+child_pid=$!
+run_status=0
+wait "$child_pid" || run_status=$?
+child_pid=''
+echo "[$(date)] [run_daily.sh] Script finished (status: $run_status)"
 exit "$run_status"

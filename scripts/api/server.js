@@ -29,6 +29,8 @@ import {
 import { envStrFrom } from '../env.js'
 import { appendRunRecord, readPointsHistory } from './pointsHistory.js'
 import { testProxy } from './proxyTester.js'
+import { buildRewardForecast, formatRewardForecast } from '../rewardForecast.cjs'
+import { readForecastHistory } from '../forecastHistory.cjs'
 import {
     log,
     parseArgs,
@@ -37,6 +39,7 @@ import {
     loadEnvFile,
     loadConfigSafe,
     redactSecrets,
+    assertNoRedactionPlaceholders,
     envStr,
     envBool
 } from './lib.js'
@@ -135,13 +138,23 @@ const WEB_DIR = path.join(__dirname, 'web')
 const DASHBOARD_USERNAME = envStr('DASHBOARD_USERNAME') ?? 'admin'
 const DASHBOARD_PASSWORD = envStr('DASHBOARD_PASSWORD')
 const SESSION_COOKIE = 'mrs_dashboard'
-const SESSION_TTL_MS = integerSetting('API_SESSION_TTL_HOURS', envStr('API_SESSION_TTL_HOURS'), 168, { min: 1 }) * 3_600_000
+const SESSION_TTL_MS =
+    integerSetting('API_SESSION_TTL_HOURS', envStr('API_SESSION_TTL_HOURS'), 168, { min: 1 }) * 3_600_000
 const ALLOW_ACCOUNT_WRITE = envBool('API_ALLOW_ACCOUNT_WRITE', true)
-const PROXY_TEST_TIMEOUT_MS = integerSetting('API_PROXY_TEST_TIMEOUT_MS', envStr('API_PROXY_TEST_TIMEOUT_MS'), 10_000, { min: 1000 })
+const PROXY_TEST_TIMEOUT_MS = integerSetting('API_PROXY_TEST_TIMEOUT_MS', envStr('API_PROXY_TEST_TIMEOUT_MS'), 10_000, {
+    min: 1000
+})
 const STATIC_FILES = new Map([
     ['/', { file: 'index.html', type: 'text/html; charset=utf-8' }],
     ['/index.html', { file: 'index.html', type: 'text/html; charset=utf-8' }],
     ['/app.js', { file: 'app.js', type: 'text/javascript; charset=utf-8' }],
+    ['/ui.js', { file: 'ui.js', type: 'text/javascript; charset=utf-8' }],
+    ['/dashboard.js', { file: 'dashboard.js', type: 'text/javascript; charset=utf-8' }],
+    ['/refresh.js', { file: 'refresh.js', type: 'text/javascript; charset=utf-8' }],
+    ...['accounts', 'points', 'logs', 'settings', 'notifications'].map(name => [
+        `/${name}.js`,
+        { file: `${name}.js`, type: 'text/javascript; charset=utf-8' }
+    ]),
     ['/style.css', { file: 'style.css', type: 'text/css; charset=utf-8' }],
     ['/favicon.svg', { file: 'favicon.svg', type: 'image/svg+xml' }]
 ])
@@ -198,7 +211,11 @@ function sessionFromReq(req) {
         const eq = part.indexOf('=')
         if (eq === -1) continue
         if (part.slice(0, eq).trim() === SESSION_COOKIE) {
-            return verifySessionToken(decodeURIComponent(part.slice(eq + 1).trim()))
+            try {
+                return verifySessionToken(decodeURIComponent(part.slice(eq + 1).trim()))
+            } catch {
+                return null
+            }
         }
     }
     return null
@@ -491,7 +508,10 @@ const requestHandler = async (req, res) => {
         }
         // Cookie-authenticated state changes require a custom header (CSRF defense).
         if (via === 'session' && !['GET', 'HEAD', 'OPTIONS'].includes(method) && !req.headers['x-requested-with']) {
-            return sendJson(res, 403, { error: 'Missing X-Requested-With header for cookie-authenticated write.', code: 'CSRF' })
+            return sendJson(res, 403, {
+                error: 'Missing X-Requested-With header for cookie-authenticated write.',
+                code: 'CSRF'
+            })
         }
     }
 
@@ -509,6 +529,7 @@ const requestHandler = async (req, res) => {
                     'GET /status',
                     'GET /points',
                     'GET /points/history',
+                    'GET /notifications/preview',
                     'GET /logs',
                     'GET /errors',
                     'GET /history',
@@ -589,9 +610,11 @@ const requestHandler = async (req, res) => {
                 authenticated: Boolean(via),
                 via,
                 version: pkgVersion,
-                username: via === 'session' || via === 'token' ? (via === 'session' ? sessionFromReq(req)?.u : null) : null,
+                username:
+                    via === 'session' || via === 'token' ? (via === 'session' ? sessionFromReq(req)?.u : null) : null,
                 dashboardLoginConfigured: Boolean(DASHBOARD_PASSWORD),
                 tokenConfigured: Boolean(TOKEN),
+                demo: envBool('PREVIEW_DEMO', false),
                 capabilities: {
                     accountWrite: ALLOW_ACCOUNT_WRITE,
                     configWrite: ALLOW_CONFIG_WRITE,
@@ -653,21 +676,28 @@ const requestHandler = async (req, res) => {
 
         // account overview
         if (method === 'GET' && pathname === '/accounts') {
-            const accounts = accountsView().map(account => {
-                const { emailKey, ...safe } = mergeAccountStats([account], pm.getHistory().map(toHistoryRecord))[0]
-                void emailKey
-                return safe
+            const history = pm.getHistory().map(toHistoryRecord)
+            const accounts = mergeAccountStats(accountsView(), history)
+            return sendJson(res, 200, {
+                accounts,
+                count: accounts.length,
+                accountsEnvPath: path.join(projectRoot, 'config', 'accounts.env')
             })
-            return sendJson(res, 200, { accounts, count: accounts.length, accountsEnvPath: path.join(projectRoot, 'config', 'accounts.env') })
         }
 
         // ── Account CRUD (writes config/accounts.env; .env accounts are read-only here) ──
         if (method === 'POST' && pathname === '/accounts') {
             if (!ALLOW_ACCOUNT_WRITE) {
-                return sendJson(res, 403, { error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=false to disable / true to enable.' })
+                return sendJson(res, 403, {
+                    error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=false to disable / true to enable.'
+                })
             }
             const body = await readJsonObject(req)
             try {
+                if (body.clearFields !== undefined)
+                    throw Object.assign(new Error('clearFields is only supported for account edits.'), {
+                        code: 'BAD_REQUEST'
+                    })
                 const fields = validateAccountInput(flattenAccountPayload(body))
                 const slot = storeAddAccount(projectRoot, fields)
                 pm.note('info', `Account ${fields.email} added as ACCOUNT_${slot} via WebUI.`)
@@ -679,7 +709,11 @@ const requestHandler = async (req, res) => {
                 })
             } catch (err) {
                 if (err.code === 'EMAIL_CONFLICT' || err.code === 'VALIDATION_FAILED') {
-                    return sendJson(res, err.code === 'EMAIL_CONFLICT' ? 409 : 422, { error: err.message, code: err.code, errors: err.errors })
+                    return sendJson(res, err.code === 'EMAIL_CONFLICT' ? 409 : 422, {
+                        error: err.message,
+                        code: err.code,
+                        errors: err.errors
+                    })
                 }
                 if (err.code === 'BAD_REQUEST') return sendJson(res, 400, { error: err.message, code: err.code })
                 return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
@@ -688,7 +722,9 @@ const requestHandler = async (req, res) => {
 
         if ((method === 'PATCH' || method === 'PUT') && /^\/accounts\/\d+$/.test(pathname)) {
             if (!ALLOW_ACCOUNT_WRITE) {
-                return sendJson(res, 403, { error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=true to enable.' })
+                return sendJson(res, 403, {
+                    error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=true to enable.'
+                })
             }
             const slot = Number(pathname.split('/')[2])
             const existing = accountsView().find(account => account.index === slot)
@@ -702,15 +738,13 @@ const requestHandler = async (req, res) => {
             const body = await readJsonObject(req)
             try {
                 const flat = flattenAccountPayload(body)
-                if ('password' in flat && flat.password === '') {
-                    // Empty password field on edit = keep existing password.
-                    delete flat.password
-                }
-                if ('totpSecret' in flat && flat.totpSecret === '') {
-                    // Empty totpSecret field on edit = keep existing totpSecret.
-                    delete flat.totpSecret
-                }
-                storeUpdateAccount(projectRoot, slot, flat)
+                storeUpdateAccount(
+                    projectRoot,
+                    slot,
+                    flat,
+                    process.env,
+                    body.clearFields === undefined ? [] : body.clearFields
+                )
                 pm.note('info', `ACCOUNT_${slot} (${existing.email}) updated via WebUI.`)
                 return sendJson(res, 200, {
                     updated: true,
@@ -719,15 +753,20 @@ const requestHandler = async (req, res) => {
                     appliesOnNextRun: true
                 })
             } catch (err) {
-                if (err.code === 'VALIDATION_FAILED') return sendJson(res, 422, { error: err.message, code: err.code, errors: err.errors })
-                if (err.code === 'NOT_WEB_MANAGED' || err.code === 'BAD_REQUEST') return sendJson(res, err.code === 'BAD_REQUEST' ? 400 : 409, { error: err.message, code: err.code })
+                if (err.code === 'VALIDATION_FAILED')
+                    return sendJson(res, 422, { error: err.message, code: err.code, errors: err.errors })
+                if (err.code === 'EMAIL_CONFLICT') return sendJson(res, 409, { error: err.message, code: err.code })
+                if (err.code === 'NOT_WEB_MANAGED' || err.code === 'BAD_REQUEST')
+                    return sendJson(res, err.code === 'BAD_REQUEST' ? 400 : 409, { error: err.message, code: err.code })
                 return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
             }
         }
 
         if (method === 'DELETE' && /^\/accounts\/\d+$/.test(pathname)) {
             if (!ALLOW_ACCOUNT_WRITE) {
-                return sendJson(res, 403, { error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=true to enable.' })
+                return sendJson(res, 403, {
+                    error: 'Account writes are disabled. Set API_ALLOW_ACCOUNT_WRITE=true to enable.'
+                })
             }
             const slot = Number(pathname.split('/')[2])
             const existing = accountsView().find(account => account.index === slot)
@@ -764,7 +803,10 @@ const requestHandler = async (req, res) => {
                 password: envStrFrom(merged, `ACCOUNT_${slot}_PROXY_PASSWORD`),
                 timeoutMs: PROXY_TEST_TIMEOUT_MS
             })
-            pm.note(result.ok ? 'info' : 'warn', `Proxy test for ACCOUNT_${slot}: ${result.ok ? `exit ${result.ip} (${result.latencyMs}ms)` : result.error}`)
+            pm.note(
+                result.ok ? 'info' : 'warn',
+                `Proxy test for ACCOUNT_${slot}: ${result.ok ? `exit ${result.ip} (${result.latencyMs}ms)` : result.error}`
+            )
             return sendJson(res, 200, { slot, email: account.email, ...result })
         }
 
@@ -880,10 +922,34 @@ const requestHandler = async (req, res) => {
             }
         }
 
+        if (method === 'GET' && pathname === '/notifications/preview') {
+            const config = readConfig(projectRoot).data
+            const forecast = buildRewardForecast({
+                records: readForecastHistory(projectRoot),
+                accounts: accountsView(),
+                rewardGoal: config.rewardGoal,
+                timeZone: process.env.TZ || 'Asia/Shanghai'
+            })
+            return sendJson(res, 200, {
+                content: formatRewardForecast(forecast),
+                accounts: forecast.accounts,
+                goal: forecast.goal,
+                generatedAt: forecast.generatedAt,
+                window: forecast.window,
+                timeZone: forecast.timeZone,
+                demo: envBool('PREVIEW_DEMO', false),
+                sendsNotification: false
+            })
+        }
+
         // sched read
         if (method === 'GET' && pathname === '/schedule') {
             try {
-                return sendJson(res, 200, { ...readSchedule(projectRoot), writable: ALLOW_SCHEDULE_WRITE })
+                return sendJson(res, 200, {
+                    ...readSchedule(projectRoot),
+                    writable: ALLOW_SCHEDULE_WRITE,
+                    application: envBool('PREVIEW_DEMO', false) ? 'demo-storage' : 'cron'
+                })
             } catch (err) {
                 return sendJson(res, 500, { error: err.message, code: err.code })
             }
@@ -906,7 +972,11 @@ const requestHandler = async (req, res) => {
                     'info',
                     `Schedule updated via API (${method}): ${updated.enabled ? `${updated.cron} (TZ ${updated.timezone})` : 'disabled'}.`
                 )
-                return sendJson(res, 200, { ...updated, writable: true })
+                return sendJson(res, 200, {
+                    ...updated,
+                    writable: true,
+                    application: envBool('PREVIEW_DEMO', false) ? 'demo-storage' : 'cron'
+                })
             } catch (err) {
                 const status = err.code === 'BAD_REQUEST' ? 400 : 500
                 return sendJson(res, status, { error: err.message, code: err.code })
@@ -1046,6 +1116,7 @@ const requestHandler = async (req, res) => {
             }
             let candidate
             try {
+                assertNoRedactionPlaceholders(body)
                 candidate = method === 'PATCH' ? deepMerge(readConfig(projectRoot).data, body) : body
             } catch (err) {
                 return sendJson(res, err.code === 'BAD_REQUEST' ? 400 : 500, {
@@ -1165,7 +1236,15 @@ function serveDiagnosticFile(res, pathname) {
 }
 
 // startup
-const server = http.createServer(requestHandler)
+const server = http.createServer((req, res) => {
+    // Covers URL parsing, static dispatch and authentication as well as routes.
+    void requestHandler(req, res).catch(err => {
+        log('ERROR', 'Request failed:', err instanceof Error ? err.message : String(err))
+        if (res.destroyed || res.writableEnded) return
+        if (!res.headersSent) sendJson(res, 500, { error: 'Internal server error' })
+        else res.destroy()
+    })
+})
 
 server.on('error', err => {
     if (err && err.code === 'EADDRINUSE') {
@@ -1177,7 +1256,10 @@ server.on('error', err => {
 })
 
 server.listen(PORT, HOST, () => {
-    log('INFO', `${pkgName} control API listening on http://${HOST}:${PORT} (WebUI: http://${HOST === '0.0.0.0' ? '<server-ip>' : HOST}:${PORT}/)`)
+    log(
+        'INFO',
+        `${pkgName} control API listening on http://${HOST}:${PORT} (WebUI: http://${HOST === '0.0.0.0' ? '<server-ip>' : HOST}:${PORT}/)`
+    )
     log('INFO', `Launch command: ${command} ${args.join(' ')}`.trim())
     log(
         'INFO',

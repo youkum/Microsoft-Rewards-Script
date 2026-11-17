@@ -18,6 +18,10 @@
 
 </div>
 
+> [!IMPORTANT]
+> **2026-11-17 更新当前保存在独立分支 `improvements/webui-pushplus-platform-20261117`，供审查及后续升级，尚未合并或发布镜像。现有部署继续沿用旧版本，无需现在拉取、重建或迁移。**
+> 更新内容见 [本轮更新说明](RELEASE_NOTES_20261117.md)；准备升级时再按 [升级与回滚指导](UPGRADE_GUIDE.md) 执行。Linux amd64/ARM64 原生容器检查仍需 CI 验证。
+
 > [!NOTE]
 > 🤖 **Vibe-Coding 模式说明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
 > 无论是六重积分容灾降级架构、现代登录流程与干扰页跳过、WebUI 内嵌实时双语日志协同，还是 Docker 与工程化配置，均在开发者提示词引导下由 AI 独立完成全链路分析、编码、测试与部署。
@@ -56,16 +60,16 @@
 > 完整历史记录见 📄 [CHANGELOG.md](./CHANGELOG.md)。
 
 - **2026-11-09**：
-  - **架构深度审查与加固**：API 内容协商与 Web 路由解耦、CORS 补齐 `X-Requested-With`、积分历史本地时区分组修复、SOCKS 标准端口（1080）纠偏、账号编辑邮箱防重校验、前端 XSS 免疫强化。
+    - **架构深度审查与加固**：API 内容协商与 Web 路由解耦、CORS 补齐 `X-Requested-With`、积分历史本地时区分组修复、SOCKS 标准端口（1080）纠偏、账号编辑邮箱防重校验、前端 XSS 免疫强化。
 - **2026-11-07**：
-  - **控制面板直接内嵌**：无需额外部署外部 WebUI 容器，单容器单端口（8890）直接托管极速原生 JS 控制台。
-  - **网页端账号管理**：支持在 Web 端直接添加/编辑/删除刷积分账号，独立写入 `config/accounts.env`。
-  - **每账号独立代理与测速**：集成独立代理配置与连通性测试（回显出口 IP、国家与延迟）。
-  - **积分历史持久化与图表**：新增 `points-history.jsonl` 自动轮转存储，提供历史每日积分柱状图与明细。
+    - **控制面板直接内嵌**：无需额外部署外部 WebUI 容器，单容器单端口（8890）直接托管极速原生 JS 控制台。
+    - **网页端账号管理**：支持在 Web 端直接添加/编辑/删除刷积分账号，独立写入 `config/accounts.env`。
+    - **每账号独立代理与测速**：集成独立代理配置与连通性测试（回显出口 IP、国家与延迟）。
+    - **积分历史持久化与图表**：新增 `points-history.jsonl` 自动轮转存储，提供历史每日积分柱状图与明细。
 - **2026-11-02**：
-  - **WebUI 控制面板连通性加固**：优化端口映射与 Docker 桥接网络配置，解决 `8890` 端口无法从外部浏览器打开的问题；完善 HTTP Basic Auth 管理员密码配置指引。
-  - **多账号热替换与清理**：完善多账号配置规范，提供热更新账号并清理 SQLite 旧会话（`sessions.db`）的无痛迁移方案。
-  - **中文积分报表升级**：新增结构化中文积分报表输出，全面适配 WebUI 正则解析器与实时指标卡片展示。
+    - **WebUI 控制面板连通性加固**：优化端口映射与 Docker 桥接网络配置，解决 `8890` 端口无法从外部浏览器打开的问题；完善 HTTP Basic Auth 管理员密码配置指引。
+    - **多账号热替换与清理**：完善多账号配置规范，提供热更新账号并清理 SQLite 旧会话（`sessions.db`）的无痛迁移方案。
+    - **中文积分报表升级**：新增结构化中文积分报表输出，全面适配 WebUI 正则解析器与实时指标卡片展示。
 
 ---
 
@@ -74,13 +78,13 @@
 **增强版亮点（最新优化）**
 
 - 🌟 **全量积分画像 & 6 级高可用降级体系**：
-  - 支持抓取完整账户积分视图：可用余额、历史总计、今日已得、PC/移动/Edge各子项剩余配额、等级、升级进度、连击天数与保护。
-  - 实现 6 级自动容灾降级（官方主 API ➔ Flyout 接口 ➔ 真实上下文内生 Fetch ➔ DOM 文本抓取 ➔ React Flight 状态 ➔ 保底安全对象），**保证 100% 不因页面微调抛错崩溃**。
+    - 支持抓取完整账户积分视图：可用余额、历史总计、今日已得、PC/移动/Edge各子项剩余配额、等级、升级进度、连击天数与保护。
+    - 实现 6 级自动容灾降级（官方主 API ➔ Flyout 接口 ➔ 真实上下文内生 Fetch ➔ DOM 文本抓取 ➔ React Flight 状态 ➔ 保底安全对象），**保证 100% 不因页面微调抛错崩溃**。
 - 🌟 **自适应认证与无感跳过拦截页**：
-  - 自动识别并跳过“体验无密码”、“保护你的账户”、“添加备用安全信息”等阶段性弹窗阻碍。
-  - 智能过滤 Cookie 条款与协议弹窗，支持回车键底层键盘提交兜底。
+    - 自动识别并跳过“体验无密码”、“保护你的账户”、“添加备用安全信息”等阶段性弹窗阻碍。
+    - 智能过滤 Cookie 条款与协议弹窗，支持回车键底层键盘提交兜底。
 - 🌟 **Vibe-Coding 亲和支持**：
-  - 预置 `.cursorrules`、`CLAUDE.md`、`AGENT.md`、`VIBECODING.md`，兼容 Cursor / Trae / Windsurf / Claude Code / Devin 等人机协同工具。
+    - 预置 `.cursorrules`、`CLAUDE.md`、`AGENT.md`、`VIBECODING.md`，兼容 Cursor / Trae / Windsurf / Claude Code / Devin 等人机协同工具。
 
 **账户管理**
 
@@ -175,10 +179,10 @@
     ```
 
 2. 安装 Node.js 24+
-3. 安装依赖包：
+3. 安装依赖包（根据 lockfile 固定版本）：
 
     ```bash
-    npm install
+    npm ci
     ```
 
 4. 若出现 `Error: browserType.launch: Executable doesn't exist` 报错，执行：
@@ -207,6 +211,10 @@
     npm start
     ```
 
+开发验证可运行 `npm test`、`npm run build`、`npm run lint` 和 `npm run format:check`。CI 会在 `V4-china` 的 Pull Request 中执行相同检查。
+
+双架构目标为 **Linux x86-64（amd64）与 ARM64**；32 位 x86/ARMv7 不在范围内。CI 分别构建两个 Dockerfile 并执行原生客户端/浏览器自检。本地尚未验证 ARM64 容器运行，需以原生 CI 通过为准。详见 [开发、验证与升级说明](DEVELOPMENT.md)。
+
 > 💡 调试时可直接源码运行：`npm run dev`（带 `-dev` 参数输出 DEBUG 日志）。
 
 </details>
@@ -234,14 +242,17 @@ cd Microsoft-Rewards-Script
 cp env.example .env
 ```
 
-编辑 `.env`，至少配置一个账户：
+编辑 `.env`，设置控制面板认证（默认 Compose 必须同时配置 API 令牌和面板登录密码）：
 
 ```dotenv
-ACCOUNT_1_EMAIL=you@example.com
-ACCOUNT_1_PASSWORD=your_password
+API_TOKEN=replace_with_a_random_64_character_token
+DASHBOARD_USERNAME=admin
+DASHBOARD_PASSWORD=replace_with_a_strong_dashboard_password
 ```
 
-> 多账号按 `ACCOUNT_2_*`、`ACCOUNT_3_*` 递增配置（也可以启动后在 WebUI 面板里直接添加）。如需从外部浏览器打开内嵌面板，请在 `.env` 末尾设置 `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`。
+生成随机 API 令牌：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`。账号可以启动后在面板添加，也可以配置 `ACCOUNT_1_EMAIL` 等环境变量。
+
+> `compose.override.yaml` 会自动加载并要求 `API_TOKEN`，缺失会在启动前报错。面板密码用于浏览器登录，API 令牌用于外部程序。默认面板仅发布到本机回环地址，远程访问应配置 HTTPS 反向代理或 SSH 转发。
 
 ### 3. 构建并启动主容器
 
@@ -250,6 +261,7 @@ docker compose up -d --build
 ```
 
 > **重要**：后续代码拉取更新（`git pull`）后，加 `--build` 重新构建镜像生效：
+>
 > ```bash
 > git pull origin V4-china
 > docker compose up -d --build
@@ -258,6 +270,7 @@ docker compose up -d --build
 ### 4. 数据持久化与查看日志
 
 容器挂载了两个关键目录，升级重建不丢失登录状态：
+
 - `./config/`：行为配置文件（首次运行自动从 `config.example.json` 生成）
 - `./sessions/`：账户会话与浏览器指纹（首次成功登录后复用 Cookie）
 
@@ -271,24 +284,24 @@ docker compose restart          # 快捷重启
 
 `compose.yaml` 已默认开启 `API_MODE=true` 并映射 `8890` 端口，**控制面板直接内嵌在主容器中，无需再部署任何额外容器**。
 
-1. 在 `.env` 中设置面板登录账号（务必设置密码，否则面板仅限本机访问时无保护）：
+1. 在 `.env` 中设置面板登录账号（默认 Compose 必须同时设置 `API_TOKEN` 和 `DASHBOARD_PASSWORD`）：
 
     ```dotenv
     DASHBOARD_USERNAME=admin
     DASHBOARD_PASSWORD=your_dashboard_password
     ```
 
-2. 启动后浏览器访问 `http://<服务器IP>:8890`，即可进行**全部操作**：
+2. 启动后浏览器访问 `http://127.0.0.1:8890`，即可进行**全部操作**。远程服务器可先用 SSH 转发：`ssh -L 8890:127.0.0.1:8890 user@server`，然后仍访问本机地址。
 
-    | 页面 | 能力 |
-    | --- | --- |
-    | 📊 总览 | 运行状态、启停/重启、单账号运行、各账号实时积分（SSE 推送） |
-    | 👤 账号管理 | **网页端增/删/改账号**（写入 `config/accounts.env`，下次运行生效）、每账号独立代理配置、**代理连通性测试**（出口 IP/国家/延迟） |
-    | 💰 积分历史 | **持久化积分报表**（重启不丢）：每日获得柱状图、分账号累计、运行记录明细 |
-    | 📜 实时日志 | SSE 实时日志流、级别过滤、自动滚动 |
-    | ⏰ 运行调度 | Cron 编辑、启用开关、排除账号 |
-    | ⚙️ 行为配置 | 任务开关表单 + 原始 config.json 编辑（受 `API_ALLOW_CONFIG_WRITE` 控制） |
-    | 🧰 会话与诊断 | 登录会话管理（删除需重新登录）、错误诊断截图/快照查看 |
+    | 页面          | 能力                                                                                                                            |
+    | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+    | 📊 总览       | 运行状态、启停/重启、单账号运行、各账号实时积分（SSE 推送）                                                                     |
+    | 👤 账号管理   | **网页端增/删/改账号**（写入 `config/accounts.env`，下次运行生效）、每账号独立代理配置、**代理连通性测试**（出口 IP/国家/延迟） |
+    | 💰 积分历史   | **持久化积分报表**（重启不丢）：每日获得柱状图、分账号累计、运行记录明细                                                        |
+    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动                                                                                              |
+    | ⏰ 运行调度   | Cron 编辑、启用开关、排除账号                                                                                                   |
+    | ⚙️ 行为配置   | 任务开关表单 + 原始 config.json 编辑（受 `API_ALLOW_CONFIG_WRITE` 控制）                                                        |
+    | 🧰 会话与诊断 | 登录会话管理（删除需重新登录）、错误诊断截图/快照查看                                                                           |
 
 > 说明:网页端新增的账号保存在 `config/accounts.env`(该目录已挂载持久化),与 `.env` 中手工配置的账号**合并生效**(`accounts.env` 中同槽位优先);`.env` 账号在面板中只读。旧的外部仪表盘 [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) 仍可按原方式配合 `API_TOKEN` 使用,两者互不影响。
 
@@ -328,20 +341,20 @@ docker compose restart          # 重启（不重建）
 <details>
 <summary><b>🔵 Core / 核心配置</b></summary>
 
-| 设置                        | 描述                                | 默认值          | Docker 环境变量                       |
-| --------------------------- | ----------------------------------- | --------------- | ------------------------------------- |
-| `sessionPath`               | 存储浏览器会话的目录                | `sessions`      | —                                     |
-| `headless`                  | 在后台运行浏览器                    | `false`（可见） | Docker 强制 `true`                    |
-| `browserChannel`            | `chromium`（内置补丁版，推荐）或 `msedge`（系统真实 Edge；⚠️ 实验性：Edge 152 + Playwright 1.6x 访问 rewards.bing.com 会崩溃，见 [playwright#41438](https://github.com/microsoft/playwright/issues/41438)，修复后可重试） | `chromium` | `CONFIG_BROWSER_CHANNEL`              |
-| `clusters`                  | 并发账户集群数                      | `1`             | `CONFIG_CLUSTERS`                     |
-| `errorDiagnostics`          | 出错时保存诊断信息到 `diagnostics/` | `false`         | `CONFIG_ERROR_DIAGNOSTICS`            |
-| `ensureStreakProtection`    | 确保连击保护已开启                  | `true`          | `CONFIG_ENSURE_STREAK_PROTECTION`     |
-| `autoClaimPunchcardRewards` | 自动领取已完成的打卡奖励            | `false`         | `CONFIG_AUTO_CLAIM_PUNCHCARD_REWARDS` |
-| `skipNonPointTasks`         | 跳过无积分奖励的任务                | `true`          | `CONFIG_SKIP_NON_POINT_TASKS`         |
-| `prewarmDesktopLogin`       | 移动端登录后立即完成桌面端登录并保存会话（需要手机批准的账户可把两次批准集中在运行开头），之后桌面阶段直接复用会话 | `false` | `CONFIG_PREWARM_DESKTOP_LOGIN`        |
-| `accountDelay.min` / `.max` | 下一账户开始前的延迟                | `1min` - `3min` | `CONFIG_ACCOUNT_DELAY_MIN` / `_MAX`   |
-| `searchOnBingLocalQueries`  | ExploreOnBing 活动使用本地词库      | `false`         | `CONFIG_SEARCH_ON_BING_LOCAL`         |
-| `globalTimeout`             | 所有操作的超时时间                  | `30sec`         | `CONFIG_GLOBAL_TIMEOUT`               |
+| 设置                        | 描述                                                                                                                                                                                                                      | 默认值          | Docker 环境变量                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------- |
+| `sessionPath`               | 存储浏览器会话的目录                                                                                                                                                                                                      | `sessions`      | —                                     |
+| `headless`                  | 在后台运行浏览器                                                                                                                                                                                                          | `false`（可见） | Docker 强制 `true`                    |
+| `browserChannel`            | `chromium`（内置补丁版，推荐）或 `msedge`（系统真实 Edge；⚠️ 实验性：Edge 152 + Playwright 1.6x 访问 rewards.bing.com 会崩溃，见 [playwright#41438](https://github.com/microsoft/playwright/issues/41438)，修复后可重试） | `chromium`      | `CONFIG_BROWSER_CHANNEL`              |
+| `clusters`                  | 并发账户集群数                                                                                                                                                                                                            | `1`             | `CONFIG_CLUSTERS`                     |
+| `errorDiagnostics`          | 出错时保存诊断信息到 `diagnostics/`                                                                                                                                                                                       | `false`         | `CONFIG_ERROR_DIAGNOSTICS`            |
+| `ensureStreakProtection`    | 确保连击保护已开启                                                                                                                                                                                                        | `true`          | `CONFIG_ENSURE_STREAK_PROTECTION`     |
+| `autoClaimPunchcardRewards` | 自动领取已完成的打卡奖励                                                                                                                                                                                                  | `false`         | `CONFIG_AUTO_CLAIM_PUNCHCARD_REWARDS` |
+| `skipNonPointTasks`         | 跳过无积分奖励的任务                                                                                                                                                                                                      | `true`          | `CONFIG_SKIP_NON_POINT_TASKS`         |
+| `prewarmDesktopLogin`       | 移动端登录后立即完成桌面端登录并保存会话（需要手机批准的账户可把两次批准集中在运行开头），之后桌面阶段直接复用会话                                                                                                        | `false`         | `CONFIG_PREWARM_DESKTOP_LOGIN`        |
+| `accountDelay.min` / `.max` | 下一账户开始前的延迟                                                                                                                                                                                                      | `1min` - `3min` | `CONFIG_ACCOUNT_DELAY_MIN` / `_MAX`   |
+| `searchOnBingLocalQueries`  | ExploreOnBing 活动使用本地词库                                                                                                                                                                                            | `false`         | `CONFIG_SEARCH_ON_BING_LOCAL`         |
+| `globalTimeout`             | 所有操作的超时时间                                                                                                                                                                                                        | `30sec`         | `CONFIG_GLOBAL_TIMEOUT`               |
 
 </details>
 
@@ -479,13 +492,13 @@ docker compose restart          # 重启（不重建）
 
 降低风控特征的运行策略集合。`humanize.enabled=false`（默认）时以下全部不生效，行为与原版一致。
 
-| 设置                                         | 描述                                                                 | 默认值            | Docker 环境变量                                       |
-| -------------------------------------------- | -------------------------------------------------------------------- | ----------------- | ----------------------------------------------------- |
-| `humanize.enabled`                           | 总开关                                                               | `false`           | `CONFIG_HUMANIZE_ENABLED`                             |
-| `humanize.skipWhenCompletedToday`            | 当天已成功运行过（`logs/last-success.txt`）则再次启动时直接退出，配合早晚两次定时实现"兜底轮自动跳过" | `false` | `CONFIG_HUMANIZE_SKIP_WHEN_COMPLETED`                 |
-| `humanize.quietHours`                        | 静默时段数组；运行中进入时段自动挂起到结束，启动时落在时段内也等待后再跑。支持 `start > end` 跨午夜 | `[]`    | 仅 config.json                                        |
-| `humanize.searchTargetRatio.min` / `.max`    | 每轮搜索目标完成度随机区间（移动/桌面各自抽取），保留分向下取整到 3 的倍数 | `0.85` - `1.0` | `CONFIG_HUMANIZE_SEARCH_TARGET_RATIO_MIN` / `_MAX`    |
-| `humanize.readToEarnArticles.min` / `.max`   | Read-to-Earn 每轮随机阅读篇数上限区间                                 | `7` - `10`        | `CONFIG_HUMANIZE_READ_TO_EARN_MIN` / `_MAX`           |
+| 设置                                       | 描述                                                                                                  | 默认值         | Docker 环境变量                                    |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------- | -------------- | -------------------------------------------------- |
+| `humanize.enabled`                         | 总开关                                                                                                | `false`        | `CONFIG_HUMANIZE_ENABLED`                          |
+| `humanize.skipWhenCompletedToday`          | 当天已成功运行过（`logs/last-success.txt`）则再次启动时直接退出，配合早晚两次定时实现"兜底轮自动跳过" | `false`        | `CONFIG_HUMANIZE_SKIP_WHEN_COMPLETED`              |
+| `humanize.quietHours`                      | 静默时段数组；运行中进入时段自动挂起到结束，启动时落在时段内也等待后再跑。支持 `start > end` 跨午夜   | `[]`           | 仅 config.json                                     |
+| `humanize.searchTargetRatio.min` / `.max`  | 每轮搜索目标完成度随机区间（移动/桌面各自抽取），保留分向下取整到 3 的倍数                            | `0.85` - `1.0` | `CONFIG_HUMANIZE_SEARCH_TARGET_RATIO_MIN` / `_MAX` |
+| `humanize.readToEarnArticles.min` / `.max` | Read-to-Earn 每轮随机阅读篇数上限区间                                                                 | `7` - `10`     | `CONFIG_HUMANIZE_READ_TO_EARN_MIN` / `_MAX`        |
 
 `quietHours` 规则示例（days 支持全名或缩写，未列出的天不静默）：
 
@@ -667,18 +680,18 @@ gmya.net 免费档对连续请求有频率限制。解决方法：
 
 本项目的发展凝聚了开源社区众多优秀作者的智慧。在此对以下开源项目及其作者致以崇高的敬意：
 
-| 开源项目 | 协议 | 仓库与角色说明 |
-| :--- | :--- | :--- |
-| **Microsoft-Rewards-Script** | GPL-3.0 | [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)<br>项目核心上游，确立了 TypeScript 架构与 Playwright 任务工作流 |
-| **Microsoft-Rewards-Script (V4-china)** | GPL-3.0 | [chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script)<br>国内本地化基础，中国热搜聚合引擎（gmya.net）与微信推送通道（PushPlus/ClawBot） |
-| **rewards-dashboard** | MIT | [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard)<br>官方配套 WebUI 仪表盘前端，实现实时日志流监控与多账户可视化管理 |
-| **Patchright** | Apache-2.0 | [Kaliiiiiiiiii-Venyx/patchright](https://github.com/Kaliiiiiiiiii-Venyx/patchright)<br>反反爬底层浏览器运行时，针对 CDP 泄露及特征参数深度修复 |
-| **Fingerprint Suite** | Apache-2.0 | [apify/fingerprint-suite](https://github.com/apify/fingerprint-suite)<br>提供高仿真的真实设备指纹生成与注入（Canvas/WebGL/音频/屏幕参数） |
-| **Ghost Cursor** | MIT | [Xynon69/ghost-cursor-playwright-port](https://github.com/Xynon69/ghost-cursor-playwright-port)<br>拟人化贝塞尔曲线鼠标移动与平滑自然滚动引擎 |
-| **OTPAuth** | MIT | [hectorm/otpauth](https://github.com/hectorm/otpauth)<br>RFC 6238 / RFC 4226 标准 TOTP 两步验证动态口令算法库 |
-| **impit** | MIT | [alextunbridge/impit](https://github.com/alextunbridge/impit)<br>支持 TLS 指纹定制与代理池的高性能 HTTP 请求客户端 |
-| **https-proxy-agent** | MIT | [TooTallNate/proxy-agents](https://github.com/TooTallNate/proxy-agents)<br>提供 HTTP/HTTPS 代理隧道与出口连通性探测支持 |
-| **socks-proxy-agent** | MIT | [TooTallNate/proxy-agents](https://github.com/TooTallNate/proxy-agents)<br>提供 SOCKS4/SOCKS5 代理客户端与出口连通性探测支持 |
+| 开源项目                                | 协议       | 仓库与角色说明                                                                                                                                                              |
+| :-------------------------------------- | :--------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Microsoft-Rewards-Script**            | GPL-3.0    | [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)<br>项目核心上游，确立了 TypeScript 架构与 Playwright 任务工作流                 |
+| **Microsoft-Rewards-Script (V4-china)** | GPL-3.0    | [chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script)<br>国内本地化基础，中国热搜聚合引擎（gmya.net）与微信推送通道（PushPlus/ClawBot） |
+| **rewards-dashboard**                   | MIT        | [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard)<br>官方配套 WebUI 仪表盘前端，实现实时日志流监控与多账户可视化管理                              |
+| **Patchright**                          | Apache-2.0 | [Kaliiiiiiiiii-Venyx/patchright](https://github.com/Kaliiiiiiiiii-Venyx/patchright)<br>反反爬底层浏览器运行时，针对 CDP 泄露及特征参数深度修复                              |
+| **Fingerprint Suite**                   | Apache-2.0 | [apify/fingerprint-suite](https://github.com/apify/fingerprint-suite)<br>提供高仿真的真实设备指纹生成与注入（Canvas/WebGL/音频/屏幕参数）                                   |
+| **Ghost Cursor**                        | MIT        | [Xynon69/ghost-cursor-playwright-port](https://github.com/Xynon69/ghost-cursor-playwright-port)<br>拟人化贝塞尔曲线鼠标移动与平滑自然滚动引擎                               |
+| **OTPAuth**                             | MIT        | [hectorm/otpauth](https://github.com/hectorm/otpauth)<br>RFC 6238 / RFC 4226 标准 TOTP 两步验证动态口令算法库                                                               |
+| **impit**                               | MIT        | [alextunbridge/impit](https://github.com/alextunbridge/impit)<br>支持 TLS 指纹定制与代理池的高性能 HTTP 请求客户端                                                          |
+| **https-proxy-agent**                   | MIT        | [TooTallNate/proxy-agents](https://github.com/TooTallNate/proxy-agents)<br>提供 HTTP/HTTPS 代理隧道与出口连通性探测支持                                                     |
+| **socks-proxy-agent**                   | MIT        | [TooTallNate/proxy-agents](https://github.com/TooTallNate/proxy-agents)<br>提供 SOCKS4/SOCKS5 代理客户端与出口连通性探测支持                                                |
 
 > 若涉及侵权请联系删除。欢迎开源开发者共同维护交流！
 

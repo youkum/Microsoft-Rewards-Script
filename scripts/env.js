@@ -1,8 +1,14 @@
+import credentialEnv from './credentialEnv.cjs'
+
+export const { parseEnvContent, quoteEnvValue } = credentialEnv
+
 export function envStrFrom(sourceEnv, key) {
     const value = sourceEnv[key]
     if (value === undefined) return undefined
 
-    const trimmed = String(value).trim()
+    const text = String(value)
+    if (credentialEnv.isSecretEnvKey(key)) return text.length ? text : undefined
+    const trimmed = text.trim()
     return trimmed.length ? trimmed : undefined
 }
 

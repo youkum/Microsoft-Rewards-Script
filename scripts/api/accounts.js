@@ -10,11 +10,7 @@ const apiDir = path.dirname(fileURLToPath(import.meta.url))
 // Default source: .env overlaid by the WebUI-managed config/accounts.env
 // (block-level per slot), so account CRUD takes effect without a restart.
 function defaultSourceEnv() {
-    try {
-        return getMergedAccountEnv(getProjectRoot(apiDir))
-    } catch {
-        return process.env
-    }
+    return getMergedAccountEnv(getProjectRoot(apiDir))
 }
 
 function sanitizeProxyUrl(value) {
@@ -166,7 +162,7 @@ export function buildExcludedAccountsEnv(excludedAccountIndexes, sourceEnv = def
 }
 
 export function mergeAccountStats(accounts, runs) {
-    // Index history results by email.
+    // Index history results once; callers may share the aggregation across accounts.
     const byEmail = new Map()
     for (const run of runs) {
         const when = run.endedAt || run.startedAt || null
