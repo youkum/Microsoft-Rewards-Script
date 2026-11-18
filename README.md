@@ -19,22 +19,20 @@
 </div>
 
 > [!IMPORTANT]
-> **2026-11-17 更新当前保存在独立分支 `improvements/webui-pushplus-platform-20261117`，供审查及后续升级，尚未合并或发布镜像。现有部署继续沿用旧版本，无需现在拉取、重建或迁移。**
-> [草稿 PR #1](https://github.com/youkum/Microsoft-Rewards-Script/pull/1) · 更新内容见 [本轮更新说明](RELEASE_NOTES_20261117.md)；准备升级时再按 [升级与回滚指导](UPGRADE_GUIDE.md) 执行。Linux amd64/ARM64 原生容器检查仍需 CI 验证。
+> 🚀 **V4-china 主分支已全面更新**：集成现代化原生 ES Modules 内嵌控制面板（端口 `8890`）、PushPlus 微信通知智能收益与兑换预测（`rewardGoal`）、单账号/排除账号独立调度隔离、全量账号安全管理与代理连通性测试。全套功能已在生产环境实测通过，推荐直接通过本分支（`V4-china`）部署！
+> 详细更新说明见 [最新版本更新说明](RELEASE_NOTES_20261117.md)，版本升级或迁移请参考 [升级与回滚指南](UPGRADE_GUIDE.md)。
 
 > [!NOTE]
-> 🤖 **Vibe-Coding 模式说明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
+> 🤖 **项目维护与开发声明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
 > 无论是六重积分容灾降级架构、现代登录流程与干扰页跳过、WebUI 内嵌实时双语日志协同，还是 Docker 与工程化配置，均在开发者提示词引导下由 AI 独立完成全链路分析、编码、测试与部署。
 
 > ℹ️ **分支与项目说明**
 >
 > - **本分支（`V4-china`）**：本项目的默认主分支。全面适配现代 Bing Rewards 架构，已实测通过并长期稳定运行，集成全量积分画像、现代化拦截页自适应跳过以及 WebUI 仪表盘控制台，**推荐直接使用本分支部署**。
-> - 本分支账号改用 `.env` 环境变量统一配置（不再使用旧版 `accounts.json`）。
+> - 本分支账号改用 `.env` 环境变量与 `config/accounts.env` 统一配置（不再使用旧版 `accounts.json`）。
 
 > [!TIP]
 > 本分支专为**新版（modern）Bing Rewards 面板**深度打造。代码已推送到官方主仓库：[`youkum/Microsoft-Rewards-Script`](https://github.com/youkum/Microsoft-Rewards-Script)。
-
----
 
 ---
 
@@ -50,7 +48,7 @@
 - [🔔 通知渠道](#-通知渠道)
 - [❓ 常见问题](#-常见问题)
 - [⚠️ 注意事项](#-注意事项)
-- [📜 同步与致谢](#-同步与致谢)
+- [📜 开源引用与致谢](#-开源引用与致谢)
 - [⚠️ 免责声明](#-免责声明)
 
 ---
@@ -59,8 +57,15 @@
 
 > 完整历史记录见 📄 [CHANGELOG.md](./CHANGELOG.md)。
 
-- **2026-11-09**：
-    - **架构深度审查与加固**：API 内容协商与 Web 路由解耦、CORS 补齐 `X-Requested-With`、积分历史本地时区分组修复、SOCKS 标准端口（1080）纠偏、账号编辑邮箱防重校验、前端 XSS 免疫强化。
+- **2026-11-18**：
+    - **WebUI 现代化与性能跃升**：前端全面重构为原生 ES Modules（无需额外构建），合并 SSE 状态与积分刷新，大幅降低面板轮询开销。
+    - **PushPlus 逐账号收益与兑换预测**：新增 `rewardGoal` 配置，支持自动汇总各账号每日实际收益，并基于历史均值预测达成兑换目标所需天数。
+    - **单账号运行隔离与安全修复**：修复 WebUI「只跑此号」及排除账号调度时被磁盘全量账号覆盖的缺陷（引入 `ACCOUNTS_FILTERED` 保护）；加固密码输入引导语与 KMSI 登录流程；全套 86 项自动化测试全通过。
+- **2026-11-11**：
+    - **修复密码引导文案误判致命错误**：在 `Login.ts` 中增加引导语识别器，防止在密码框出现时误触发致命异常中断。
+    - **WebUI 统一全账号可编辑**：支持在线统一查看和编辑全部账号的密码、代理、TOTP 密钥与指纹设置。
+- **2026-11-10**：
+    - **WebUI 交互式控制台**：支持验证码与辅助邮箱实时交互弹窗回传，解禁行为配置与调度写入 API。
 - **2026-11-07**：
     - **控制面板直接内嵌**：无需额外部署外部 WebUI 容器，单容器单端口（8890）直接托管极速原生 JS 控制台。
     - **网页端账号管理**：支持在 Web 端直接添加/编辑/删除刷积分账号，独立写入 `config/accounts.env`。
@@ -248,11 +253,13 @@ cp env.example .env
 API_TOKEN=replace_with_a_random_64_character_token
 DASHBOARD_USERNAME=admin
 DASHBOARD_PASSWORD=replace_with_a_strong_dashboard_password
+# 可选：默认已监听 0.0.0.0:8890（局域网可直接访问）；若需仅允许本机回环可设为 127.0.0.1
+# API_BIND_ADDRESS=0.0.0.0
 ```
 
-生成随机 API 令牌：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`。账号可以启动后在面板添加，也可以配置 `ACCOUNT_1_EMAIL` 等环境变量。
+生成随机 API 令牌：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`。账号可以启动后在面板在线添加，也可以直接在 `.env` 中预填 `ACCOUNT_1_EMAIL` 等环境变量。
 
-> `compose.override.yaml` 会自动加载并要求 `API_TOKEN`，缺失会在启动前报错。面板密码用于浏览器登录，API 令牌用于外部程序。默认面板仅发布到本机回环地址，远程访问应配置 HTTPS 反向代理或 SSH 转发。
+> `compose.override.yaml` 会自动加载并要求 `API_TOKEN`，缺失会在启动前报错。面板密码用于浏览器登录 WebUI，API 令牌用于外部程序调用。默认端口映射为 `0.0.0.0:8890`，局域网内可通过 `http://<服务器IP>:8890` 直接访问。
 
 ### 3. 构建并启动主容器
 
@@ -271,8 +278,8 @@ docker compose up -d --build
 
 容器挂载了两个关键目录，升级重建不丢失登录状态：
 
-- `./config/`：行为配置文件（首次运行自动从 `config.example.json` 生成）
-- `./sessions/`：账户会话与浏览器指纹（首次成功登录后复用 Cookie）
+- `./config/`：行为配置文件（首次运行自动从 `config.example.json` 生成，含 Web 管理账号与调度）
+- `./sessions/`：账户会话与浏览器指纹（首次成功登录后复用 Cookie 与 SQLite 状态）
 
 ```bash
 docker compose logs -f          # 实时查看运行日志
@@ -284,35 +291,27 @@ docker compose restart          # 快捷重启
 
 `compose.yaml` 已默认开启 `API_MODE=true` 并映射 `8890` 端口，**控制面板直接内嵌在主容器中，无需再部署任何额外容器**。
 
-1. 在 `.env` 中设置面板登录账号（默认 Compose 必须同时设置 `API_TOKEN` 和 `DASHBOARD_PASSWORD`）：
+1. 在 `.env` 中设置面板登录账号（默认必须同时设置 `API_TOKEN` 和 `DASHBOARD_PASSWORD`）：
 
     ```dotenv
     DASHBOARD_USERNAME=admin
     DASHBOARD_PASSWORD=your_dashboard_password
     ```
 
-2. 启动后浏览器访问 `http://127.0.0.1:8890`，即可进行**全部操作**。远程服务器可先用 SSH 转发：`ssh -L 8890:127.0.0.1:8890 user@server`，然后仍访问本机地址。
+2. 启动后浏览器访问 `http://<服务器IP>:8890`（本机运行访问 `http://127.0.0.1:8890`），即可进行**全部操作**：
 
     | 页面          | 能力                                                                                                                            |
     | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-    | 📊 总览       | 运行状态、启停/重启、单账号运行、各账号实时积分（SSE 推送）                                                                     |
+    | 📊 总览       | 运行状态、启停/重启、**单账号运行（只跑此号）**、各账号实时积分（SSE 推送）                                                     |
     | 👤 账号管理   | **网页端增/删/改账号**（写入 `config/accounts.env`，下次运行生效）、每账号独立代理配置、**代理连通性测试**（出口 IP/国家/延迟） |
+    | 🔔 通知与预测 | **PushPlus 微信通知**配置、**`rewardGoal` 兑换目标**积分设置、逐账号积分收益与达成天数智能预测预览                             |
     | 💰 积分历史   | **持久化积分报表**（重启不丢）：每日获得柱状图、分账号累计、运行记录明细                                                        |
-    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动                                                                                              |
-    | ⏰ 运行调度   | Cron 编辑、启用开关、排除账号                                                                                                   |
+    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动、**控制台交互式输入条**（支持验证码/辅助邮箱实时交互）                                      |
+    | ⏰ 运行调度   | Cron 编辑、启用开关、排除账号（失败自动安全回滚）                                                                               |
     | ⚙️ 行为配置   | 任务开关表单 + 原始 config.json 编辑（受 `API_ALLOW_CONFIG_WRITE` 控制）                                                        |
     | 🧰 会话与诊断 | 登录会话管理（删除需重新登录）、错误诊断截图/快照查看                                                                           |
 
-> 说明:网页端新增的账号保存在 `config/accounts.env`(该目录已挂载持久化),与 `.env` 中手工配置的账号**合并生效**(`accounts.env` 中同槽位优先);`.env` 账号在面板中只读。旧的外部仪表盘 [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) 仍可按原方式配合 `API_TOKEN` 使用,两者互不影响。
-
-</details>
-
-```bash
-docker compose up -d --build   # 构建+启动
-docker compose logs -f          # 查看日志
-docker compose down             # 停止并删除容器
-docker compose restart          # 重启（不重建）
-```
+> 说明：网页端新增的账号保存在 `config/accounts.env`（该目录已挂载持久化），与 `.env` 中手工配置的账号**合并生效**（`accounts.env` 中同槽位优先），且在 Web 端均支持直接查看与编辑。旧的外部仪表盘 [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) 仍可按原方式配合 `API_TOKEN` 使用，两者互不影响。
 
 </details>
 

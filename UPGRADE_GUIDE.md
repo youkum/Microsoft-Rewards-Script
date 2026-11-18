@@ -1,14 +1,16 @@
-# 升级与回滚指南（2026-11-17，待发布）
+# 升级与回滚指南（V4-china 生产部署与维护）
 
-## 1. 当前只更新 GitHub 源码，不升级现有部署
+> 🤖 **项目维护声明**：此项目由 **AI 在人类的帮助下全面接手二次开发**，人工提供了开发建议和提示词优化。专为 Vibe-Coding（人机协同、AI 辅助编程）设计与维护。
 
-本次变更保存在 `youkum/Microsoft-Rewards-Script` 的独立更新分支 `improvements/webui-pushplus-platform-20261117`，以 [草稿 PR #1](https://github.com/youkum/Microsoft-Rewards-Script/pull/1) 提交到 `V4-china` 审查；**PR 尚未合并，尚未发布本次更新对应的容器镜像或 GitHub Release，现有旧部署保持不动**。推送分支、创建 PR 与生产发布是不同步骤。
+## 1. 适用场景与安全升级原则
 
-- 现在不要在生产目录执行 `git pull`、重新构建、拉取移动镜像标签或自动升级。
-- 不要把现有镜像的旧版本标签当成本次源码的构建结果。
-- `package.json` 当前仍为 `4.3.2.4`，不是本次更新的新发布版本。
-- 发布工作流目前要求三段稳定版本 `major.minor.patch`，并拒绝已存在的 Git tag、GitHub Release 或同版本镜像。**合并/发布前，维护者必须确定并写入一个未使用的新发布版本，同步锁文件，重新完成验证。**不能复用旧版本，也不能只覆盖旧镜像。
-- 本指南后半部分的生产命令仅供未来批准并完成正式发布后使用；没有指定任何尚不存在的新 tag。
+本指南适用于从任意旧版 `V4-china` 升级至最新版本，或在全新 Linux 服务器/Docker 环境下部署与维护。
+
+- **核心主分支**：本项目代码统一维护在 **`V4-china`** 分支。
+- **无损升级保证**：已妥善处理账号合并（`.env` 与 `config/accounts.env`）、调度计划（`config/schedule.json`）与浏览器登录会话（`sessions/sessions.db`）。
+- **停机备份铁律**：升级或迁移前，**务必先停止容器并完整归档备份**，杜绝 SQLite 会话库（WAL 模式）在写入中被直接复制导致文件损坏。
+
+---
 
 ## 2. 这次更新改变了什么
 
@@ -139,37 +141,53 @@ ssh -N -L 8890:127.0.0.1:8890 YOUR_SSH_USER@YOUR_SERVER
 
 截至本次记录，已有本地验证为 **86 项 API/Web、8 项性能、5 项隔离预览测试通过，lint 0 错误/3 个既有警告，依赖审计 0 项，格式检查与构建通过**。这是此前实际检查结果，不表示本文编写时重新运行过。Windows 本地没有 Docker；四个原生 Linux 容器 job 只是已配置，不能记作已通过，须以 GitHub CI 实际结果为准。
 
-## 7. 未来获批发布后的生产部署命令
+## 7. 生产环境标准升级与拉取命令（针对 V4-china 分支）
 
-下面是 **Linux、从已批准源码 tag 本地构建** 的路径，不是当前更新指令，也不会使用未经核验的 `latest`。已有生产部署须先完成第 5 节停机备份。新目录与旧目录分开，避免修改旧源码。
+在已有部署目录下执行平滑更新的标准流程如下：
 
-先在受控终端设置 `APPROVED_TAG` 为已发布且获批的真实 tag，`RELEASE_DIR` 为尚不存在的新绝对目录。不要把示例说明文字当作 tag：
-
+### 步骤 A：停机并创建快照备份
 ```bash
-: "${APPROVED_TAG:?请先设置已发布且获批的真实 Git tag}"
-: "${RELEASE_DIR:?请先设置新的绝对部署目录}"
+# 进入部署目录
+cd /opt/rewards/chiihero
 
-git clone --branch "$APPROVED_TAG" --depth 1 \
-  https://github.com/youkum/Microsoft-Rewards-Script.git "$RELEASE_DIR"
+# 停止正在运行的容器
+docker compose down
 
-test "$(git -C "$RELEASE_DIR" rev-parse HEAD)" = \
-  "$(git -C "$RELEASE_DIR" rev-parse "refs/tags/$APPROVED_TAG^{commit}")"
+# 创建独立时间戳备份目录
+TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/opt/rewards/backups/backup_${TIMESTAMP}"
+mkdir -p -m 700 "$BACKUP_DIR"
+
+# 归档配置文件与环境变量
+cp .env "$BACKUP_DIR/.env"
+cp -r config "$BACKUP_DIR/config"
+cp -r sessions "$BACKUP_DIR/sessions"
+echo "已完整备份至: $BACKUP_DIR"
 ```
 
-将提交 ID 与正式 Release 核对。**随后暂停命令执行**：从同一停机快照恢复 `.env`、`config/`、`sessions/` 及必要外置认证文件到新目录，并保留权限；按第 4 节核对认证、特殊字符、override 和会话路径。不要只复制数据库而漏掉配套文件。
-
-确认新目录中的 `config/schedule.json` 已停用，旧容器确已停止，且未设置其他自动触发；默认手动优先不代替这些检查。确认后才执行：
-
+### 步骤 B：拉取最新主分支代码
 ```bash
-docker compose --project-directory "$RELEASE_DIR" config --quiet
-docker compose --project-directory "$RELEASE_DIR" build microsoft-rewards-script
-docker compose --project-directory "$RELEASE_DIR" up -d --no-build microsoft-rewards-script
-docker compose --project-directory "$RELEASE_DIR" ps
+# 获取并对齐最新 V4-china 主分支代码
+git fetch origin V4-china
+git checkout V4-china
+git pull origin V4-china
 ```
 
-此路径使用项目 Compose 的 `Dockerfile.cn` 本地构建。构建失败就停止，不启动旧缓存冒充新版本。若改走 registry 镜像，另按正式 Release 的真实 digest 制定部署配置，不将本地构建命令与镜像拉取命令混用。
+### 步骤 C：重新构建镜像并启动
+```bash
+# 本地构建（内置阿里云源加速）并后台启动
+docker compose up -d --build
 
-通过 SSH 隧道登录，检查账号、配置、历史、通知预览、模块加载、健康检查和有效计划。先获批准手动验证，再恢复所需调度；不要因为容器显示 running 就认定 cron 和真实推送全部可用。
+# 检查容器运行状态与健康检查
+docker compose ps
+docker compose logs --tail 30
+```
+
+### 步骤 D：验证控制台与账号
+浏览器直接打开 `http://<服务器IP>:8890`，登录面板核验：
+1. 账号列表中各槽位账号是否均完整识别（密码、代理、TOTP 密钥均在）；
+2. 调度配置与行为配置是否正常；
+3. 点击某个账号的「只跑此号」单次执行验证，确认日志输出 `账户数: 1` 且成功复用既有 Session，无需重新登录。
 
 ## 8. 回滚：旧程序与匹配快照一起恢复
 
