@@ -9,7 +9,7 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D24-green.svg)](./package.json)
 [![WebUI](https://img.shields.io/badge/WebUI-Supported-brightgreen.svg)](./scripts/api/README.md)
 [![Vibe Coding](https://img.shields.io/badge/100%25-AI%20Secondary%20Developed-8A2BE2.svg)](./VIBECODING.md)
-[![Changelog](https://img.shields.io/badge/Changelog-2026--11--09-blueviolet.svg)](./CHANGELOG.md)
+[更新日志](./CHANGELOG.md) · [构建与部署验收](./CODEX_INSPECTION_GUIDE.md)
 [![Upstream](https://img.shields.io/badge/上游-TheNetsky/Microsoft--Rewards--Script-informational.svg)](https://github.com/TheNetsky/Microsoft-Rewards-Script)
 
 **基于 TypeScript · Patchright(Playwright) · 6重高可用积分降级 · 现代化智能登录 · WebUI 控制面板**
@@ -19,7 +19,7 @@
 </div>
 
 > [!IMPORTANT]
-> 🚀 **V4-china 主分支已全面更新**：集成现代化原生 ES Modules 内嵌控制面板（端口 `8890`）、PushPlus 微信通知智能收益与兑换预测（`rewardGoal`）、单账号/排除账号独立调度隔离、全量账号安全管理与代理连通性测试。全套功能已在生产环境实测通过，推荐直接通过本分支（`V4-china`）部署！
+> **`V4-china` 是默认开发分支，不代表正式发布。** 当前更新包含内嵌 WebUI、单账号/排除账号调度及 PushPlus 预测。部署前请核对对应提交的 [CI](https://github.com/youkum/Microsoft-Rewards-Script/actions/workflows/validate.yml)；正式版本以 [GitHub Releases](https://github.com/youkum/Microsoft-Rewards-Script/releases) 为准。
 > 详细更新说明见 [最新版本更新说明](RELEASE_NOTES_20261117.md)，版本升级或迁移请参考 [升级与回滚指南](UPGRADE_GUIDE.md)。
 
 > [!NOTE]
@@ -28,11 +28,11 @@
 
 > ℹ️ **分支与项目说明**
 >
-> - **本分支（`V4-china`）**：本项目的默认主分支。全面适配现代 Bing Rewards 架构，已实测通过并长期稳定运行，集成全量积分画像、现代化拦截页自适应跳过以及 WebUI 仪表盘控制台，**推荐直接使用本分支部署**。
+> - **本分支（`V4-china`）**：维护国内适配和内嵌控制台。本项目是社区维护的 fork，不隶属于 Microsoft 或 Rewards 官方。
 > - 本分支账号改用 `.env` 环境变量与 `config/accounts.env` 统一配置（不再使用旧版 `accounts.json`）。
 
 > [!TIP]
-> 本分支专为**新版（modern）Bing Rewards 面板**深度打造。代码已推送到官方主仓库：[`youkum/Microsoft-Rewards-Script`](https://github.com/youkum/Microsoft-Rewards-Script)。
+> 派生关系和依赖许可见 [第三方声明](THIRD-PARTY-NOTICES.md)。
 
 ---
 
@@ -60,7 +60,7 @@
 - **2026-11-18**：
     - **WebUI 现代化与性能跃升**：前端全面重构为原生 ES Modules（无需额外构建），合并 SSE 状态与积分刷新，大幅降低面板轮询开销。
     - **PushPlus 逐账号收益与兑换预测**：新增 `rewardGoal` 配置，支持自动汇总各账号每日实际收益，并基于历史均值预测达成兑换目标所需天数。
-    - **单账号运行隔离与安全修复**：修复 WebUI「只跑此号」及排除账号调度时被磁盘全量账号覆盖的缺陷（引入 `ACCOUNTS_FILTERED` 保护）；加固密码输入引导语与 KMSI 登录流程；全套 86 项自动化测试全通过。
+    - **单账号运行隔离与安全修复**：修复 WebUI「只跑此号」及排除账号调度时被磁盘全量账号覆盖的缺陷（引入 `ACCOUNTS_FILTERED` 保护）；加固密码输入引导语与 KMSI 登录流程。
 - **2026-11-11**：
     - **修复密码引导文案误判致命错误**：在 `Login.ts` 中增加引导语识别器，防止在密码框出现时误触发致命异常中断。
     - **WebUI 统一全账号可编辑**：支持在线统一查看和编辑全部账号的密码、代理、TOTP 密钥与指纹设置。
@@ -84,7 +84,7 @@
 
 - 🌟 **全量积分画像 & 6 级高可用降级体系**：
     - 支持抓取完整账户积分视图：可用余额、历史总计、今日已得、PC/移动/Edge各子项剩余配额、等级、升级进度、连击天数与保护。
-    - 实现 6 级自动容灾降级（官方主 API ➔ Flyout 接口 ➔ 真实上下文内生 Fetch ➔ DOM 文本抓取 ➔ React Flight 状态 ➔ 保底安全对象），**保证 100% 不因页面微调抛错崩溃**。
+    - 实现 6 级自动容灾降级（官方主 API ➔ Flyout 接口 ➔ 真实上下文内生 Fetch ➔ DOM 文本抓取 ➔ React Flight 状态 ➔ 保底安全对象），降低页面改动导致的异常。
 - 🌟 **自适应认证与无感跳过拦截页**：
     - 自动识别并跳过“体验无密码”、“保护你的账户”、“添加备用安全信息”等阶段性弹窗阻碍。
     - 智能过滤 Cookie 条款与协议弹窗，支持回车键底层键盘提交兜底。
@@ -253,13 +253,13 @@ cp env.example .env
 API_TOKEN=replace_with_a_random_64_character_token
 DASHBOARD_USERNAME=admin
 DASHBOARD_PASSWORD=replace_with_a_strong_dashboard_password
-# 可选：默认已监听 0.0.0.0:8890（局域网可直接访问）；若需仅允许本机回环可设为 127.0.0.1
-# API_BIND_ADDRESS=0.0.0.0
+# 默认仅允许本机回环访问；需要局域网直连时设为受信任网卡地址。
+# API_BIND_ADDRESS=127.0.0.1
 ```
 
 生成随机 API 令牌：`node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`。账号可以启动后在面板在线添加，也可以直接在 `.env` 中预填 `ACCOUNT_1_EMAIL` 等环境变量。
 
-> `compose.override.yaml` 会自动加载并要求 `API_TOKEN`，缺失会在启动前报错。面板密码用于浏览器登录 WebUI，API 令牌用于外部程序调用。默认端口映射为 `0.0.0.0:8890`，局域网内可通过 `http://<服务器IP>:8890` 直接访问。
+> `compose.yaml` 要求设置 `API_TOKEN`，缺失会在启动前报错。面板密码用于浏览器登录，API 令牌用于外部程序调用。默认宿主机端口为 `127.0.0.1:8890`，远程管理优先用 SSH 隧道。
 
 ### 3. 构建并启动主容器
 
@@ -298,15 +298,15 @@ docker compose restart          # 快捷重启
     DASHBOARD_PASSWORD=your_dashboard_password
     ```
 
-2. 启动后浏览器访问 `http://<服务器IP>:8890`（本机运行访问 `http://127.0.0.1:8890`），即可进行**全部操作**：
+2. 启动后在宿主机访问 `http://127.0.0.1:8890`。远程优先使用 [SSH 隧道](UPGRADE_GUIDE.md#43-认证端口和-compose-override)；确需局域网直连时，显式设置 `API_BIND_ADDRESS` 为服务器的受信任网卡地址，并以防火墙限制来源，不要将 `8890` 暴露到公网。登录后可以：
 
     | 页面          | 能力                                                                                                                            |
     | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
     | 📊 总览       | 运行状态、启停/重启、**单账号运行（只跑此号）**、各账号实时积分（SSE 推送）                                                     |
     | 👤 账号管理   | **网页端增/删/改账号**（写入 `config/accounts.env`，下次运行生效）、每账号独立代理配置、**代理连通性测试**（出口 IP/国家/延迟） |
-    | 🔔 通知与预测 | **PushPlus 微信通知**配置、**`rewardGoal` 兑换目标**积分设置、逐账号积分收益与达成天数智能预测预览                             |
+    | 🔔 通知与预测 | **PushPlus 微信通知**配置、**`rewardGoal` 兑换目标**积分设置、逐账号积分收益与达成天数智能预测预览                              |
     | 💰 积分历史   | **持久化积分报表**（重启不丢）：每日获得柱状图、分账号累计、运行记录明细                                                        |
-    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动、**控制台交互式输入条**（支持验证码/辅助邮箱实时交互）                                      |
+    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动、**控制台交互式输入条**（支持验证码/辅助邮箱实时交互）                                       |
     | ⏰ 运行调度   | Cron 编辑、启用开关、排除账号（失败自动安全回滚）                                                                               |
     | ⚙️ 行为配置   | 任务开关表单 + 原始 config.json 编辑（受 `API_ALLOW_CONFIG_WRITE` 控制）                                                        |
     | 🧰 会话与诊断 | 登录会话管理（删除需重新登录）、错误诊断截图/快照查看                                                                           |
@@ -328,7 +328,7 @@ docker compose restart          # 快捷重启
 - Windows 本地运行:`npm run api` 后访问 `http://127.0.0.1:3010`
 - 完整文档见 [`scripts/api/README.md`](scripts/api/README.md)
 
-> 兼容性提示:旧的 [Rewards Dashboard](https://github.com/mgrimace/rewards-dashboard) 外部面板仍可照常对接(所有原端点未变),但内嵌面板已覆盖其全部能力并新增账号管理/代理测试。
+> 兼容性提示：可按 [API 文档](scripts/api/README.md) 验证第三方面板的对接；外部面板不是内嵌面板的必装组件。
 
 ---
 
@@ -677,22 +677,7 @@ gmya.net 免费档对连续请求有频率限制。解决方法：
 
 ## 📜 开源引用与致谢
 
-本项目的发展凝聚了开源社区众多优秀作者的智慧。在此对以下开源项目及其作者致以崇高的敬意：
-
-| 开源项目                                | 协议       | 仓库与角色说明                                                                                                                                                              |
-| :-------------------------------------- | :--------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Microsoft-Rewards-Script**            | GPL-3.0    | [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)<br>项目核心上游，确立了 TypeScript 架构与 Playwright 任务工作流                 |
-| **Microsoft-Rewards-Script (V4-china)** | GPL-3.0    | [chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script)<br>国内本地化基础，中国热搜聚合引擎（gmya.net）与微信推送通道（PushPlus/ClawBot） |
-| **rewards-dashboard**                   | MIT        | [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard)<br>官方配套 WebUI 仪表盘前端，实现实时日志流监控与多账户可视化管理                              |
-| **Patchright**                          | Apache-2.0 | [Kaliiiiiiiiii-Venyx/patchright](https://github.com/Kaliiiiiiiiii-Venyx/patchright)<br>反反爬底层浏览器运行时，针对 CDP 泄露及特征参数深度修复                              |
-| **Fingerprint Suite**                   | Apache-2.0 | [apify/fingerprint-suite](https://github.com/apify/fingerprint-suite)<br>提供高仿真的真实设备指纹生成与注入（Canvas/WebGL/音频/屏幕参数）                                   |
-| **Ghost Cursor**                        | MIT        | [Xynon69/ghost-cursor-playwright-port](https://github.com/Xynon69/ghost-cursor-playwright-port)<br>拟人化贝塞尔曲线鼠标移动与平滑自然滚动引擎                               |
-| **OTPAuth**                             | MIT        | [hectorm/otpauth](https://github.com/hectorm/otpauth)<br>RFC 6238 / RFC 4226 标准 TOTP 两步验证动态口令算法库                                                               |
-| **impit**                               | MIT        | [alextunbridge/impit](https://github.com/alextunbridge/impit)<br>支持 TLS 指纹定制与代理池的高性能 HTTP 请求客户端                                                          |
-| **https-proxy-agent**                   | MIT        | [TooTallNate/proxy-agents](https://github.com/TooTallNate/proxy-agents)<br>提供 HTTP/HTTPS 代理隧道与出口连通性探测支持                                                     |
-| **socks-proxy-agent**                   | MIT        | [TooTallNate/proxy-agents](https://github.com/TooTallNate/proxy-agents)<br>提供 SOCKS4/SOCKS5 代理客户端与出口连通性探测支持                                                |
-
-> 若涉及侵权请联系删除。欢迎开源开发者共同维护交流！
+感谢原始项目 [TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script) 与直接上游 [chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script)。派生关系、兼容项目和锁定依赖许可见 [第三方声明](THIRD-PARTY-NOTICES.md)。
 
 ---
 

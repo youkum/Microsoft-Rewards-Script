@@ -85,11 +85,14 @@ fi
 printf 'PASS: manual-first startup, inert account file, cron supervision\n'
 
 rm -f "$FIXTURE/api-pid" "$FIXTURE/cron-pid"
+# Exercise fresh standalone startup without a config bind-mount.
+mv "$FIXTURE/app/config" "$FIXTURE/original-config"
 bash "$FIXTURE/entrypoint.sh" > "$FIXTURE/stop.log" 2>&1 &
 entry_pid=$!
 pids+=("$entry_pid")
 await_file "$FIXTURE/api-pid"
 await_file "$FIXTURE/cron-pid"
+[ -f "$FIXTURE/app/config/config.json" ]
 kill -TERM "$entry_pid"
 status=0
 wait "$entry_pid" || status=$?
@@ -99,6 +102,7 @@ for file in api-pid cron-pid; do
 done
 printf 'PASS: termination stops both child services\n'
 
+mv "$FIXTURE/original-config/accounts.env" "$FIXTURE/app/config/accounts.env"
 # Scheduler accepts only file presence here; all account parsing belongs to app.
 API_MODE=false CRON_SCHEDULE='0 7 * * *' bash "$FIXTURE/entrypoint.sh" > "$FIXTURE/scheduler.log" 2>&1 &
 entry_pid=$!

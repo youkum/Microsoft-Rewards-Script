@@ -74,6 +74,7 @@ RUN set -eux; \
 # Copy config example into the image so entrypoint can use it as a fallback
 # when the user hasn't mounted their own config.json
 COPY config.example.json ./config.example.json
+COPY LICENSE THIRD-PARTY-NOTICES.md ./
 
 # config.json is managed via the ./config bind mount (compose.yaml mounts
 # ./config to /usr/src/microsoft-rewards-script/config). On first run the

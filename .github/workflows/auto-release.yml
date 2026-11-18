@@ -168,3 +168,4 @@ jobs:
                       Image: `${{ steps.identity.outputs.image }}:${{ steps.identity.outputs.version }}`
                       Digest: `${{ steps.build.outputs.digest }}`
                       Source revision: `${{ github.sha }}`
+                      Corresponding source: ${{ github.server_url }}/${{ github.repository }}/archive/${{ github.sha }}.tar.gz

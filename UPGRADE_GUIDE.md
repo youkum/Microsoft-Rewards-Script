@@ -88,7 +88,7 @@ ACCOUNT_1_PASSWORD="a\"b\\c$literal"
 
 容器启动已移除对账号文件的 Shell 执行。**不要对账号文件执行 `source`、`.`、`eval` 或命令替换，也不要用 Shell 规则再次“解码”新文件。**这不是可执行脚本格式。容器内部由 Bash 生成、供 cron 恢复环境的 `/etc/container_env` 是另一用途，不应混同为用户凭据文件。
 
-Compose 对 `.env` 的插值/读取与应用数据解析是两层机制；含特殊字符的值还需核对所用 Compose 版本的处理，不要假定二者完全相同。WebUI 仅管理 `config/accounts.env` 中的账号，基础 `.env` 账号仍需手工维护。
+Compose 对 `.env` 的插值/读取与应用数据解析是两层机制；含特殊字符的值还需核对所用 Compose 版本的处理，不要假定二者完全相同。WebUI 写入 `config/accounts.env`；编辑基础 `.env` 中的账号时，通过同槽位的 Web 配置覆盖，不改写 `.env`。
 
 ### 4.2 手动优先不覆盖既有计划
 
@@ -107,7 +107,7 @@ Compose 对 `.env` 的插值/读取与应用数据解析是两层机制；含特
 ssh -N -L 8890:127.0.0.1:8890 YOUR_SSH_USER@YOUR_SERVER
 ```
 
-然后访问自己电脑的 `http://127.0.0.1:8890`。本机端口被占用时可改隧道左侧端口。不要为了“方便访问”直接开放公网 8890；若另行部署反向代理，应有 TLS、认证和网络访问控制。
+然后访问自己电脑的 `http://127.0.0.1:8890`。旧安装若依赖默认全接口绑定，升级后局域网直连将停止；确需直连时，在 `.env` 中显式将 `API_BIND_ADDRESS` 设为宿主机的受信任网卡地址，并以防火墙限制来源。本机端口被占用时可改隧道左侧端口。不要为了“方便访问”直接开放公网 8890；若另行部署反向代理，应有 TLS、认证和网络访问控制。
 
 - 默认执行 `docker compose` 会自动合并 `compose.yaml` 与 `compose.override.yaml`；当前附带 override 将 `API_ALLOW_ENV_OVERRIDES` 设为 `false`。核对服务器上是否另有本地 override，不要把历史本地文件带来的行为误认为新版默认值。显式使用 `-f` 时应逐个列出需要的文件，不能假定仍会隐式加载 override。
 - 用 `docker compose config --quiet` 检查插值和结构，避免输出展开后的敏感配置。
@@ -139,13 +139,14 @@ ssh -N -L 8890:127.0.0.1:8890 YOUR_SSH_USER@YOUR_SERVER
 - [ ] 正式发布成功，核对 Git tag 对应提交、镜像 digest、双架构 manifest 和 OCI revision，记录准确版本。
 - [ ] 维护窗口、停机快照和回滚演练获确认，才进入下面的部署步骤。
 
-截至本次记录，已有本地验证为 **86 项 API/Web、8 项性能、5 项隔离预览测试通过，lint 0 错误/3 个既有警告，依赖审计 0 项，格式检查与构建通过**。这是此前实际检查结果，不表示本文编写时重新运行过。Windows 本地没有 Docker；四个原生 Linux 容器 job 只是已配置，不能记作已通过，须以 GitHub CI 实际结果为准。
+按 [验收指南](CODEX_INSPECTION_GUIDE.md) 复验目标提交；测试数量、容器矩阵与结果以该提交实际运行记录为准。
 
 ## 7. 生产环境标准升级与拉取命令（针对 V4-china 分支）
 
 在已有部署目录下执行平滑更新的标准流程如下：
 
 ### 步骤 A：停机并创建快照备份
+
 ```bash
 # 进入部署目录
 cd /opt/rewards/chiihero
@@ -166,6 +167,7 @@ echo "已完整备份至: $BACKUP_DIR"
 ```
 
 ### 步骤 B：拉取最新主分支代码
+
 ```bash
 # 获取并对齐最新 V4-china 主分支代码
 git fetch origin V4-china
@@ -174,6 +176,7 @@ git pull origin V4-china
 ```
 
 ### 步骤 C：重新构建镜像并启动
+
 ```bash
 # 本地构建（内置阿里云源加速）并后台启动
 docker compose up -d --build
@@ -184,7 +187,9 @@ docker compose logs --tail 30
 ```
 
 ### 步骤 D：验证控制台与账号
+
 浏览器直接打开 `http://<服务器IP>:8890`，登录面板核验：
+
 1. 账号列表中各槽位账号是否均完整识别（密码、代理、TOTP 密钥均在）；
 2. 调度配置与行为配置是否正常；
 3. 点击某个账号的「只跑此号」单次执行验证，确认日志输出 `账户数: 1` 且成功复用既有 Session，无需重新登录。

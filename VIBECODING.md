@@ -3,7 +3,7 @@
 > 🤖 **核心声明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
 > 本文档专为 **Vibe-Coding**（人机协同、AI 辅助编程，如 Cursor、Trae、Windsurf、Claude Code、Devin 等）量身打造，系统梳理项目核心架构、扩展模式、开源引用与调试最佳实践。
 
-- **官方主仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script)
+- **本项目仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script)
 - **主力维护分支**: `V4-china`
 - **一键克隆命令**:
     ```bash
@@ -77,7 +77,7 @@
 | **Tier 3: 浏览器内生 Fetch**  | 在真实页面上下文调用 `page.evaluate()` 执行内部 API    | 完美复用会话 Cookie，规避独立网络层代理指纹异常 |
 | **Tier 4: DOM 元素抽取**      | 抓取 `#id_rc`, `[data-bi-id="rewards-points"]` 等文本  | 接口全部失效时，直接从已渲染网页提取            |
 | **Tier 5: React Flight 快照** | 解析现代 Bing 页面的 RSC 数据流                        | 提取 React 虚拟 DOM 挂载的初始状态              |
-| **Tier 6: 基础保底兜底**      | 返回预置基础对象，数字全部置为安全值                   | 保证流程 100% 不中断，WebUI 保持稳定            |
+| **Tier 6: 基础保底兜底**      | 返回预置基础对象，数字全部置为安全值                   | 在上游无法返回数据时提供安全值                  |
 
 ---
 
@@ -113,47 +113,7 @@
 
 本项目深度集成了开源社区的优秀项目，谨向以下开源作者与项目致以诚挚敬意：
 
-1. **[TheNetsky/Microsoft-Rewards-Script](https://github.com/TheNetsky/Microsoft-Rewards-Script)**
-    - **协议**: GNU General Public License v3.0 (GPL-3.0)
-    - **贡献**: 项目的核心上游，确立了 TypeScript 模块化架构与基础任务执行体系。
-
-2. **[chiihero/Microsoft-Rewards-Script](https://github.com/chiihero/Microsoft-Rewards-Script)**
-    - **分支**: `V4-china`
-    - **贡献**: 针对国内用户环境的深度汉化与优化，实现了基于中国热搜的随机词源引擎，集成了 PushPlus 与 ClawBot 等微信通知渠道。
-
-3. **[mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard)**
-    - **协议**: MIT License
-    - **贡献**: 提供了现代化的 WebUI 监控面板，基于 SQLite 持久化多账户积分历史，并通过 SSE 实现与脚本核心的双向协同控制。
-
-4. **[Kaliiiiiiiiii-Venyx/patchright](https://github.com/Kaliiiiiiiiii-Venyx/patchright)**
-    - **贡献**: 深度修补 Playwright CDP 协议特征的反反爬无头浏览器内核，大幅降低微软 Bot 检测标记风险。
-
-5. **[apify/fingerprint-suite](https://github.com/apify/fingerprint-suite)** (`fingerprint-generator` & `fingerprint-injector`)
-    - **协议**: Apache-2.0
-    - **贡献**: 生成高仿真真实设备指纹（Canvas/WebGL/音频/屏幕分辨率），规避机械化特征风控。
-
-6. **[Xynon69/ghost-cursor-playwright-port](https://github.com/Xynon69/ghost-cursor-playwright-port)**
-    - **协议**: MIT License
-    - **贡献**: 基于贝塞尔曲线的拟人化鼠标移动与随机平滑滚动算法。
-
-7. **[hectorm/otpauth](https://github.com/hectorm/otpauth)**
-    - **协议**: MIT License
-    - **贡献**: 高性能 RFC 6238 / RFC 4226 TOTP 双因素认证动态密码计算。
-
-8. **[alextunbridge/impit](https://github.com/alextunbridge/impit)**
-    - **协议**: MIT License
-    - **贡献**: 高性能且支持 TLS 指纹定制的 HTTP 客户端。
-
-9. **[TooTallNate/node-https-proxy-agent](https://github.com/TooTallNate/proxy-agents)**
-    - **协议**: MIT License
-    - **贡献**: 提供 HTTP/HTTPS 代理连接与隧道传输能力，驱动控制面板的代理连通性检测。
-
-10. **[TooTallNate/node-socks-proxy-agent](https://github.com/TooTallNate/proxy-agents)**
-
-- **协议**: MIT License
-- **贡献**: 提供 SOCKS4/SOCKS5 代理客户端协议封装，支持无认证 SOCKS 代理连通性探测。
-
----
+上游、兼容面板与依赖许可统一维护在 [第三方声明](THIRD-PARTY-NOTICES.md)。
 
 ## 六、AI / Vibe-Coding 常用提示词与调试命令
 

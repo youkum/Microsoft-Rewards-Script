@@ -14,7 +14,10 @@ docker run --detach --name "$NAME" --network none \
 ready=false
 for ((i=0; i<45; i++)); do
     if docker exec "$NAME" scripts/docker/healthcheck.sh; then ready=true; break; fi
-    test "$(docker inspect --format '{{.State.Running}}' "$NAME")" = true
+    if [ "$(docker inspect --format '{{.State.Running}}' "$NAME")" != true ]; then
+        docker inspect --format 'Startup failed: exit={{.State.ExitCode}} error={{.State.Error}}' "$NAME" >&2
+        exit 1
+    fi
     sleep 1
 done
 [ "$ready" = true ]

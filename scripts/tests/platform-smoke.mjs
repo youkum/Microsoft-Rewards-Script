@@ -87,8 +87,12 @@ if (!args.includes('--lock-only')) {
         const directories = await readdir(shellRoot, { withFileTypes: true })
         const candidates = directories.filter(entry => entry.isDirectory() && /headless|chrome-linux/.test(entry.name))
         assert.equal(candidates.length, 1, 'Expected one headless-shell executable directory')
-        const executable = process.arch === 'arm64' ? 'headless_shell' : 'chrome-headless-shell'
-        await assertElf(fileURLToPath(new URL(`${candidates[0].name}/${executable}`, shellRoot)))
+        const executableDir = new URL(`${candidates[0].name}/`, shellRoot)
+        const executableNames = (await readdir(executableDir)).filter(name =>
+            ['headless_shell', 'chrome-headless-shell'].includes(name)
+        )
+        assert.equal(executableNames.length, 1, 'Expected one Chromium headless-shell executable')
+        await assertElf(fileURLToPath(new URL(executableNames[0], executableDir)))
         console.log(
             `Runtime smoke passed: linux/${process.arch}, impit ${impitLock.version}, Chromium ${browser.version()}`
         )

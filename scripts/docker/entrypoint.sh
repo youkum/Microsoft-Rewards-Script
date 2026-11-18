@@ -35,6 +35,8 @@ fi
 
 CONFIG_FILE="$SCRIPT_DIR/config/config.json"
 CONFIG_EXAMPLE="$SCRIPT_DIR/config.example.json"
+# A fresh image started without Compose has no config bind-mount directory.
+mkdir -p -- "$(dirname -- "$CONFIG_FILE")"
 if [ ! -f "$CONFIG_EXAMPLE" ]; then
   echo "ERROR: config.example.json not found at $CONFIG_EXAMPLE - image may be corrupt." >&2
   exit 1

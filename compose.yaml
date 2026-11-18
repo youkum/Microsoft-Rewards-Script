@@ -82,9 +82,9 @@ services:
             #CONFIG_CLAWBOT_AUTHFILE: ''             # 凭证路径，默认项目根 clawbot-auth.json
 
         # ── 内嵌 WebUI 面板端口映射（API_MODE=true 时生效）──────────────
-        # 默认绑定 0.0.0.0:8890 便于局域网及本地访问；可通过 .env 中的 API_BIND_ADDRESS 覆盖
+        # 默认仅映射到宿主机 127.0.0.1:8890；需要局域网访问时显式指定受信任网卡地址
         ports:
-            - '${API_BIND_ADDRESS:-0.0.0.0}:8890:3010'
+            - '${API_BIND_ADDRESS:-127.0.0.1}:8890:3010'
 
         healthcheck:
             test: ['CMD-SHELL', 'scripts/docker/healthcheck.sh']
