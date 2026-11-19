@@ -3,8 +3,7 @@ name: Formatting Repair
 on:
     push:
         branches:
-            - v4
-            - v3
+            - V4-china
     workflow_dispatch:
 
 concurrency:
