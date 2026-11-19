@@ -183,6 +183,15 @@ export function createAccountsView({ api, state, toast }) {
                                     '只跑此号'
                                 ),
                                 ' ',
+                                h(
+                                    'button',
+                                    {
+                                        class: 'btn small',
+                                        onclick: event => saveLoginSingle(account, event.currentTarget)
+                                    },
+                                    '保存登录会话'
+                                ),
+                                ' ',
                                 account.webManaged
                                     ? h(
                                           'button',
@@ -225,6 +234,20 @@ export function createAccountsView({ api, state, toast }) {
             location.hash = '#/dashboard'
         } catch (err) {
             toast(err.message, 'error')
+        }
+    }
+
+    async function saveLoginSingle(account, button) {
+        if (button.disabled || !active()) return
+        setBusy(button, true, '正在启动…')
+        try {
+            await api(`/accounts/${account.index}/login`, { method: 'POST', body: { platform: 'both' } })
+            toast(`${account.email}：仅登录并保存手机与电脑会话，请在日志页处理验证码。`, 'success')
+            location.hash = '#/logs'
+        } catch (err) {
+            toast(err.message, 'error')
+        } finally {
+            setBusy(button, false, '保存登录会话')
         }
     }
 

@@ -173,6 +173,12 @@ export class MicrosoftRewardsBot {
             react: new ReactFunc(this)
         }
         this.config = loadConfig()
+        if (process.env.REWARDS_LOGIN_ONLY) {
+            // A maintenance login does not send activity or daily-summary notifications.
+            for (const channel of Object.values(this.config.webhook)) {
+                if (channel && typeof channel === 'object' && 'enabled' in channel) channel.enabled = false
+            }
+        }
         this.activeWorkers = this.config.clusters
         this.exitedWorkers = []
     }
@@ -282,6 +288,15 @@ export class MicrosoftRewardsBot {
     }
 
     async run(): Promise<void> {
+        const loginPlatform = process.env.REWARDS_LOGIN_ONLY
+        if (loginPlatform) {
+            if (!['mobile', 'desktop', 'both'].includes(loginPlatform) || this.accounts.length !== 1) {
+                throw new Error('仅登录模式必须选择一个账号和有效平台（mobile/desktop/both）')
+            }
+            await this.saveLoginOnly(this.accounts[0]!, loginPlatform as 'mobile' | 'desktop' | 'both')
+            await flushAllWebhooks()
+            return
+        }
         this.finishOverall = this.performance.start('overall')
         let failed = true
         try {
@@ -290,6 +305,65 @@ export class MicrosoftRewardsBot {
         } finally {
             // Cluster completion is event-driven; its exit handler finishes the span.
             if (failed || this.config.clusters <= 1) this.finishOverall(failed)
+        }
+    }
+
+    async saveLoginOnly(account: Account, platform: 'mobile' | 'desktop' | 'both'): Promise<void> {
+        this.userData.userName = this.utils.getEmailUsername(account.email)
+        const cachedRegion =
+            account.geoLocale === 'auto' ? loadResolvedRegion(this.config.sessionPath, account.email) : undefined
+        this.accountLocale = resolveAccountLocale(account, cachedRegion)
+        this.userData.langCode = this.accountLocale.language
+        this.userData.geoLocale = this.accountLocale.country ?? 'US'
+        this.http = new HttpClient(
+            account.proxy,
+            { 'Accept-Language': this.accountLocale.acceptLanguage },
+            this.performance
+        )
+        this.logger.info('main', 'LOGIN-ONLY', `仅登录并保存会话 | 账户=${account.email} | 平台=${platform}`)
+        const platforms = platform === 'both' ? [true, false] : [platform === 'mobile']
+        try {
+            for (const isMobile of platforms) {
+                await executionContext.run({ isMobile, account }, async () => {
+                    this.nextActions = {}
+                    this.nextRouterStateTree = ''
+                    this.reactSnapshot = null
+                    this.browser.func.resetAccountState()
+                    let session: BrowserSession | null = null
+                    let saved = false
+                    try {
+                        session = await this.browserFactory.createBrowser(account)
+                        const page = await session.context.newPage()
+                        if (isMobile) {
+                            this.mainMobilePage = page
+                            this.fingerprintMobile = session.fingerprint
+                        } else {
+                            this.mainDesktopPage = page
+                            this.fingerprintDesktop = session.fingerprint
+                        }
+                        await this.login.login(page, account, true)
+                        if (!(await this.browser.func.checkpointActiveSession('LOGIN-ONLY-SAVE'))) {
+                            throw new Error('登录成功，但会话保存失败，请检查数据库权限或磁盘空间')
+                        }
+                        saved = true
+                        this.logger.info(
+                            isMobile,
+                            'LOGIN-ONLY-SAVED',
+                            `登录会话已保存 | 账户=${account.email} | 平台=${isMobile ? 'mobile' : 'desktop'}`
+                        )
+                    } finally {
+                        if (session) await this.browser.func.closeBrowser(session.context, account.email, saved)
+                    }
+                })
+            }
+            this.logger.info('main', 'LOGIN-ONLY-END', `登录会话保存完成 | 账户=${account.email} | 平台=${platform}`)
+        } catch (error) {
+            this.logger.error(
+                'main',
+                'LOGIN-ONLY-ERROR',
+                `登录会话保存失败 | 账户=${account.email} | 错误=${error instanceof Error ? error.message : String(error)}`
+            )
+            throw error
         }
     }
 
@@ -752,6 +826,12 @@ export class MicrosoftRewardsBot {
         this.reactSnapshot = null
         this.reactSnapshots = { mobile: null, desktop: null }
         this.searchTopicsCache = null
+        this.userData.initialPoints = 0
+        this.userData.currentPoints = 0
+        this.userData.gainedPoints = 0
+        this.nextActions = {}
+        this.nextRouterStateTree = ''
+        this.browser.func.resetAccountState()
 
         const apiSearch = this.config.experimental.apiSearch
         const apiSearchOnBing = this.config.experimental.apiSearchOnBing
@@ -851,6 +931,9 @@ export class MicrosoftRewardsBot {
                 }
 
                 const data: DashboardData = await this.browser.func.getDashboardData()
+                if (data.dataQuality?.search === false || data.dataQuality?.activities === false) {
+                    throw new Error('Rewards 仪表板数据不可用，本次任务未执行；请检查区域接口或登录会话')
+                }
                 const hasBotScoreWarning =
                     Array.isArray(data?.dashboard?.userWarnings) &&
                     data.dashboard.userWarnings.some(warning => warning?.name === 'Fraud_UserWarning_BotScore_UX')
@@ -921,6 +1004,9 @@ export class MicrosoftRewardsBot {
                 }
 
                 const initialAllPoints = await this.browser.func.getAllAccountPoints().catch(() => null)
+                if (!initialAllPoints || initialAllPoints.balanceVerified === false) {
+                    throw new Error('起始积分余额无法核实，停止任务以避免错误统计收益')
+                }
                 if (initialAllPoints) {
                     this.userData.initialPoints = initialAllPoints.availablePoints
                     this.userData.currentPoints = initialAllPoints.availablePoints
@@ -1227,6 +1313,9 @@ export class MicrosoftRewardsBot {
                 }
 
                 const finalAllPoints = await this.browser.func.getAllAccountPoints().catch(() => null)
+                if (!finalAllPoints || finalAllPoints.balanceVerified === false) {
+                    throw new Error('结束积分余额无法核实，本次收益未知')
+                }
                 const finalPoints = finalAllPoints
                     ? finalAllPoints.availablePoints
                     : await this.browser.func.getCurrentPoints()
@@ -1336,10 +1425,12 @@ async function main(): Promise<void> {
     try {
         await rewardsBot.initialize()
         await rewardsBot.run()
+        if (process.env.REWARDS_LOGIN_ONLY) process.exit(0)
     } catch (error) {
         rewardsBot.logger.error('main', 'MAIN-ERROR', error as Error)
         await flushAllWebhooks()
         process.exitCode = 1
+        if (process.env.REWARDS_LOGIN_ONLY) process.exit(1)
     }
 }
 

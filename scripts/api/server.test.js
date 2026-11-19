@@ -466,6 +466,62 @@ function logLine(user, title, message) {
     return `[11/17/2026, 10:00:00 AM] [${user}] [INFO] MAIN [${title}] ${message}`
 }
 
+test(
+    'account login API isolates one slot, accepts only fixed platforms, and excludes maintenance from points history',
+    testOptions,
+    async t => {
+        const api = await fixture(t, {
+            accounts: { ACCOUNT_2_EMAIL: 'alpha@example.invalid', ACCOUNT_7_EMAIL: 'beta@example.invalid' }
+        })
+        await api.json('/accounts/7/login', { method: 'POST', body: {} }, 401)
+        for (const platform of ['all', [], {}]) {
+            await api.json('/accounts/7/login', { method: 'POST', headers: tokenHeaders, body: { platform } }, 400)
+        }
+        await api.json('/accounts/99/login', { method: 'POST', headers: tokenHeaders, body: {} }, 400)
+        await fs.writeFile(
+            path.join(api.root, 'mock-run.cjs'),
+            [
+                'const selected = process.env.ACCOUNT_1_EMAIL',
+                "console.log('SELECTION ' + JSON.stringify({email:selected,platform:process.env.REWARDS_LOGIN_ONLY,other:process.env.ACCOUNT_2_EMAIL||null}))",
+                "console.log('[11/19/2026, 10:00:00 AM] [beta] [INFO] MAIN [LOGIN-ONLY] 仅登录并保存会话 | 账户=' + selected + ' | 平台=' + process.env.REWARDS_LOGIN_ONLY)",
+                "console.log('[11/19/2026, 10:00:01 AM] [beta] [INFO] MAIN [LOGIN-ONLY-END] 登录会话保存完成 | 账户=' + selected + ' | 平台=' + process.env.REWARDS_LOGIN_ONLY)"
+            ].join('\n')
+        )
+        const started = await api.json(
+            '/accounts/7/login',
+            { method: 'POST', headers: tokenHeaders, body: { platform: 'desktop' } },
+            202
+        )
+        assert.equal(started.mode, 'login')
+        assert.equal(started.selectedAccount.email, 'beta@example.invalid')
+        await until(
+            async () => (await api.json('/history', { headers: tokenHeaders })).count === 1,
+            'maintenance run completion'
+        )
+        const history = await api.json('/history', { headers: tokenHeaders })
+        assert.equal(history.runs[0].mode, 'login')
+        assert.equal(history.runs[0].accounts[0].success, true)
+        const accountsAfterLogin = await api.json('/accounts', { headers: tokenHeaders })
+        assert.equal(accountsAfterLogin.accounts.find(item => item.index === 7).runs, 0)
+        const logs = await api.json('/logs', { headers: tokenHeaders })
+        const selection = logs.logs.find(item => item.message.startsWith('SELECTION '))
+        assert.deepEqual(JSON.parse(selection.message.slice(10)), {
+            email: 'beta@example.invalid',
+            platform: 'desktop',
+            other: null
+        })
+        await assert.rejects(fs.access(path.join(api.root, 'config', 'points-history.jsonl')), { code: 'ENOENT' })
+        // A process failing before any login log is still a maintenance run.
+        await fs.writeFile(path.join(api.root, 'mock-run.cjs'), 'process.exitCode = 1\n')
+        await api.json('/accounts/7/login', { method: 'POST', headers: tokenHeaders, body: {} }, 202)
+        await until(
+            async () => (await api.json('/history', { headers: tokenHeaders })).count === 2,
+            'failed maintenance completion'
+        )
+        await assert.rejects(fs.access(path.join(api.root, 'config', 'points-history.jsonl')), { code: 'ENOENT' })
+    }
+)
+
 async function mockRun(api, lines, expectedRuns) {
     await fs.writeFile(path.join(api.root, 'mock-lines.json'), JSON.stringify(lines))
     const started = await api.json('/start', { method: 'POST', headers: tokenHeaders, body: {} }, 202)

@@ -27,10 +27,25 @@ export default class BrowserFunc {
         this.bot = bot
     }
 
+    resetAccountState(): void {
+        this.useFlyoutDashboardFallback = false
+        this.rewardsDeploymentId = ''
+        this.botMetricsLoggedPlatforms.clear()
+    }
+
     async getDashboardData(cookies?: Cookie[]): Promise<DashboardData> {
         const fingerprintHeaders = { ...(this.bot.fingerprint?.headers ?? {}) }
         delete fingerprintHeaders['Cookie']
         delete fingerprintHeaders['cookie']
+
+        // The legacy Rewards API redirects to sign-in even with a valid earn-page
+        // session. Use the regional Flyout endpoint before the legacy fallback.
+        try {
+            return await this.getFlyoutDashboardData(cookies, fingerprintHeaders)
+        } catch {
+            const inPageData = await this.getInPageFlyoutData()
+            if (inPageData) return inPageData
+        }
 
         if (!this.useFlyoutDashboardFallback) {
             let primaryError: unknown
@@ -51,9 +66,21 @@ export default class BrowserFunc {
 
                     await this.applyResponseCookies(URLs.rewards.userInfoApi, response.headers['set-cookie'])
 
-                    if (response.data?.dashboard) {
+                    if (response.data?.dashboard?.userStatus?.isRewardsUser === true) {
                         this.logBotDetectionMetrics(response.data)
-                        return response.data
+                        return {
+                            ...response.data,
+                            dataQuality: {
+                                source: 'rewards-api',
+                                balance:
+                                    Number.isFinite(response.data.dashboard.userStatus.availablePoints) &&
+                                    response.data.dashboard.userStatus.availablePoints >= 0,
+                                search:
+                                    Array.isArray(response.data.dashboard.userStatus.counters?.pcSearch) ||
+                                    Array.isArray(response.data.dashboard.userStatus.counters?.mobileSearch),
+                                activities: true
+                            }
+                        }
                     }
                     throw new Error('Dashboard data missing from API response')
                 } catch (error) {
@@ -73,45 +100,31 @@ export default class BrowserFunc {
             this.bot.logger.warn(
                 this.bot.isMobile,
                 'GET-DASHBOARD-DATA',
-                `重试后主接口仍不可用，改用 Bing flyout 兜底 | 信息=${this.errorMessage(primaryError)}`
+                `备用旧接口仍不可用，返回未核实的本地数据 | 信息=${this.errorMessage(primaryError)}`
             )
         }
 
-        try {
-            return await this.getFlyoutDashboardData(cookies, fingerprintHeaders)
-        } catch {
-            // 尝试通过浏览器页面内原生执行 fetch 获取 Flyout
-            const inPageData = await this.getInPageFlyoutData()
-            if (inPageData) return inPageData
-
-            // 兜底返回本地安全降级数据，保证绝不抛错阻断任务
-            return this.createFallbackDashboardData()
-        }
+        return this.createFallbackDashboardData()
     }
 
-    private async getInPageFlyoutData(): Promise<DashboardData | null> {
-        const page = this.bot.isMobile ? this.bot.mainMobilePage : this.bot.mainDesktopPage
+    private async getInPageFlyoutData(
+        page = this.bot.isMobile ? this.bot.mainMobilePage : this.bot.mainDesktopPage
+    ): Promise<DashboardData | null> {
         if (!page || page.isClosed()) return null
 
         try {
             this.bot.logger.info(
                 this.bot.isMobile,
                 'GET-DASHBOARD-DATA',
-                '正在尝试通过真实浏览器内部执行 Flyout 请求兜底'
+                '正在尝试通过浏览器会话执行区域 Flyout 请求兜底'
             )
-            const flyoutData = await page.evaluate(async (url: string) => {
-                try {
-                    const res = await fetch(url, {
-                        method: 'GET',
-                        headers: { Accept: 'application/json' },
-                        credentials: 'include'
-                    })
-                    if (!res.ok) return null
-                    return await res.json()
-                } catch {
-                    return null
-                }
-            }, URLs.bing.rewardsFlyoutUserInfo)
+            // APIRequestContext uses the browser cookie jar across redirects and
+            // avoids a cross-origin fetch from rewards.bing.com being blocked.
+            const response = await page.request.get(this.getFlyoutUrl(), {
+                headers: { Accept: 'application/json' },
+                timeout: 20000
+            })
+            const flyoutData: RewardsFlyoutData | null = response.ok() ? await response.json() : null
 
             if (flyoutData && !flyoutData.isError) {
                 const mapped = mapFlyoutToDashboard(flyoutData)
@@ -146,10 +159,11 @@ export default class BrowserFunc {
         this.bot.logger.warn(
             this.bot.isMobile,
             'GET-DASHBOARD-DATA',
-            `使用本地安全降级仪表板数据 | 当前积分=${points} | 历史总分=${lifetime}`
+            `使用本地安全降级仪表板数据 | 当前积分=${points} | 历史总分=${lifetime} | 余额及任务额度未核实`
         )
 
         return {
+            dataQuality: { source: 'local', balance: false, search: false, activities: false },
             dashboard: {
                 userStatus: {
                     availablePoints: points,
@@ -187,28 +201,35 @@ export default class BrowserFunc {
         fingerprintHeaders: Record<string, string>
     ): Promise<DashboardData> {
         try {
+            const url = this.getFlyoutUrl()
+            const origin = new URL(url).origin
             const response = await this.bot.http.request<RewardsFlyoutData>({
-                url: URLs.bing.rewardsFlyoutUserInfo,
+                url,
                 method: 'GET',
                 headers: {
                     ...fingerprintHeaders,
                     Accept: 'application/json',
-                    Cookie: this.buildCookieHeader(this.getCachedCookies(cookies, URLs.bing.rewardsFlyoutUserInfo)),
-                    Referer: `${URLs.bing.origin}/`,
-                    Origin: URLs.bing.origin
+                    Cookie: this.buildCookieHeader(this.getCachedCookies(cookies, url)),
+                    Referer: `${origin}/`,
+                    Origin: origin
                 },
                 retries: 0
             })
 
-            await this.applyResponseCookies(URLs.bing.rewardsFlyoutUserInfo, response.headers['set-cookie'])
+            await this.applyResponseCookies(url, response.headers['set-cookie'])
 
             const detection = detectFlyoutBotWarning(response.data)
-            this.bot.logger.warn(
+            this.bot.logger.debug(
                 this.bot.isMobile,
                 'GET-DASHBOARD-DATA',
                 `使用 Bing flyout 部分仪表板 | 疑似受限=${detection.likelyLimited} | bot标记=${detection.hasBotProfileMarkers} | 活动折叠=${detection.hasCollapsedActivities}`
             )
             const mappedDashboard = mapFlyoutToDashboard(response.data)
+            this.bot.logger.debug(
+                this.bot.isMobile,
+                'GET-DASHBOARD-DATA',
+                `区域 Flyout 数据已验证 | host=${new URL(url).hostname} | balance=${mappedDashboard.dataQuality?.balance} | search=${mappedDashboard.dataQuality?.search}`
+            )
             this.logBotDetectionMetrics(mappedDashboard)
             return mappedDashboard
         } catch (error) {
@@ -219,6 +240,10 @@ export default class BrowserFunc {
             )
             throw error
         }
+    }
+
+    private getFlyoutUrl(): string {
+        return URLs.bing.rewardsFlyoutForCountry(this.bot.userData.geoLocale || 'US')
     }
 
     private logBotDetectionMetrics(data: DashboardData): void {
@@ -417,48 +442,27 @@ export default class BrowserFunc {
 
         try {
             // 1. 尝试从 Bing 顶栏 Rewards 积分角标提取 (#id_rc)
-            const bingPointsText = await activePage
-                .$eval('#id_rc, #id_rh, .id_name', el => el.textContent)
-                .catch(() => null)
+            const bingPointsText = await activePage.$eval('#id_rc', el => el.textContent).catch(() => null)
             if (bingPointsText) {
-                const clean = bingPointsText.replace(/[^0-9]/g, '')
-                if (clean) {
-                    const parsed = parseInt(clean, 10)
-                    if (Number.isFinite(parsed) && parsed >= 0) return parsed
-                }
+                const points = this.parsePointsText(bingPointsText)
+                if (points !== null) return points
             }
 
             // 2. 尝试从 Rewards 页面主要积分元素提取
             const rewardsPointsText = await activePage
                 .$eval(
-                    '[data-bi-id="rewards-points"], .points-balance, [class*="pointsBalance"], [class*="availablePoints"], [aria-label*="points" i]',
+                    '[data-bi-id="rewards-points"], .points-balance, [class*="pointsBalance"], [class*="availablePoints"]',
                     el => el.textContent
                 )
                 .catch(() => null)
             if (rewardsPointsText) {
-                const clean = rewardsPointsText.replace(/[^0-9]/g, '')
-                if (clean) {
-                    const parsed = parseInt(clean, 10)
-                    if (Number.isFinite(parsed) && parsed >= 0) return parsed
-                }
+                const points = this.parsePointsText(rewardsPointsText)
+                if (points !== null) return points
             }
 
-            // 3. 在活跃页面内部执行 fetch 读取 Bing Flyout 积分（享用完整真实 Cookie 与指纹）
-            const inPagePoints = await activePage
-                .evaluate(async (url: string) => {
-                    try {
-                        const res = await fetch(url, { credentials: 'include' })
-                        if (!res.ok) return null
-                        const json = await res.json()
-                        return json?.userInfo?.balance ?? json?.flyoutResult?.userStatus?.availablePoints ?? null
-                    } catch {
-                        return null
-                    }
-                }, URLs.bing.rewardsFlyoutUserInfo)
-                .catch(() => null)
-
-            if (typeof inPagePoints === 'number' && Number.isFinite(inPagePoints) && inPagePoints >= 0) {
-                return inPagePoints
+            const inPageData = await this.getInPageFlyoutData(activePage)
+            if (inPageData?.dataQuality?.balance) {
+                return inPageData.dashboard.userStatus.availablePoints
             }
         } catch {
             // 忽略 DOM 提取异常
@@ -467,12 +471,23 @@ export default class BrowserFunc {
         return null
     }
 
+    private parsePointsText(text: string): number | null {
+        if (!/^\s*\d[\d,，\s]*(?:points?|积分|分)?\s*$/i.test(text)) return null
+        const points = Number(text.replace(/[^0-9]/g, ''))
+        return Number.isSafeInteger(points) && points >= 0 ? points : null
+    }
+
     async getCurrentPoints(): Promise<number> {
         try {
             // 1. 优先从仪表板 API / Flyout 获取
             const data = await this.getDashboardData()
             const availablePoints = data?.dashboard?.userStatus?.availablePoints
-            if (typeof availablePoints === 'number' && Number.isFinite(availablePoints) && availablePoints >= 0) {
+            if (
+                data.dataQuality?.balance !== false &&
+                typeof availablePoints === 'number' &&
+                Number.isFinite(availablePoints) &&
+                availablePoints >= 0
+            ) {
                 this.bot.userData.currentPoints = availablePoints
                 return availablePoints
             }
@@ -530,7 +545,12 @@ export default class BrowserFunc {
         const counters = userStatus?.counters
         const snapshot = this.bot.reactSnapshot
 
+        let balanceVerified = dashboardData.dataQuality?.balance !== false
+        const livePoints = balanceVerified ? null : await this.getPointsFromBrowserPage().catch(() => null)
+        if (livePoints !== null) balanceVerified = true
+
         const availablePoints =
+            livePoints ??
             (typeof userStatus?.availablePoints === 'number' && userStatus.availablePoints >= 0
                 ? userStatus.availablePoints
                 : null) ??
@@ -631,6 +651,7 @@ export default class BrowserFunc {
         const streakProtectionDays = Number(snapshot?.streakProtection?.remainingDays) || 0
 
         return {
+            balanceVerified,
             availablePoints,
             lifetimePoints,
             lifetimeRedeemed,
@@ -670,6 +691,7 @@ export default class BrowserFunc {
             `今日共计可赚取剩余: ${summary.totalEarnableToday} 分 | 今日已获得: +${summary.todayEarned} 分`,
             `----------------------------------------------------`
         ]
+        if (summary.balanceVerified === false) lines.splice(2, 0, '余额未能核实，以下为最近已知数据；本次收益未知。')
         return lines.join('\n')
     }
 
@@ -1145,7 +1167,7 @@ export default class BrowserFunc {
                 if (cookie.secure && url.protocol !== 'https:') return false
 
                 const domain = cookie.domain.replace(/^\./, '').toLowerCase()
-                if (host !== domain && !host.endsWith(`.${domain}`)) return false
+                if (host !== domain && !(cookie.domain.startsWith('.') && host.endsWith(`.${domain}`))) return false
 
                 const cookiePath = cookie.path || '/'
                 if (!requestPath.startsWith(cookiePath)) return false

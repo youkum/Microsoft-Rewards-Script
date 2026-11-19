@@ -50,12 +50,14 @@ export function parseLogLine(rawInput, source = 'stdout') {
 
 export function createRunState() {
     return {
+        mode: 'tasks',
         version: null,
         clusters: null,
         accountsTotal: null,
         currentEmail: null,
         userToEmail: {}, // log "user" (email localpart) -> full email, for attributing live lines
         lastPointUpdateAt: null,
+        pointEventTotals: {}, // account/platform activity totals, for cumulative completion logs
         totals: null, // { collected, oldTotal, newTotal, runtimeMinutes, accountsProcessed }
         order: [], // emails in the order they started
         accounts: {}, // email -> account summary
@@ -141,9 +143,17 @@ function accountEmailForEntry(state, entry) {
 function pointEventSource(title, message) {
     switch (title) {
         case 'SEARCH-BING':
-            return message.startsWith('必应搜索完成') || message.includes('pointsGained=') ? 'search' : null
+            return message.startsWith('必应搜索完成') ||
+                message.includes('pointsGained=') ||
+                message.startsWith('获得积分=')
+                ? 'search'
+                : null
         case 'SEARCH-BONUS':
-            return message.startsWith('必应搜索完成') || message.includes('pointsGained=') ? 'bonus' : null
+            return message.startsWith('必应搜索完成') ||
+                message.includes('pointsGained=') ||
+                message.startsWith('获得积分=')
+                ? 'bonus'
+                : null
         case 'READ-TO-EARN':
             return message.startsWith('文章后的积分变化') ||
                 message.startsWith('未获得积分，停止读文赚积分') ||
@@ -232,14 +242,18 @@ function applyLivePoints(state, entry) {
         touch(acc)
         return true
     }
-    const addGain = (acc, gained, balance, source) => {
+    const addGain = (acc, gained, balance, source, cumulative = false) => {
         if (!acc) return false
+        const key = `${acc.email}|${entry.platform}|${source}`
+        const previous = state.pointEventTotals[key] || 0
+        if (cumulative) gained = Math.max(0, gained - previous)
         let changed = false
         if (balance != null && acc.live.balance !== balance) {
             acc.live.balance = balance
             changed = true
         }
         if (gained > 0) {
+            state.pointEventTotals[key] = previous + gained
             acc.live.gained += gained
             acc.live.bySource[source] = (acc.live.bySource[source] || 0) + gained
             changed = true
@@ -249,6 +263,17 @@ function applyLivePoints(state, entry) {
     }
 
     let m
+    if (entry.title === 'POINTS-ALL') {
+        const text = msg.replaceAll('\\n', '\n')
+        const email = text.match(/账号:\s*(\S+@\S+)/)?.[1]
+        const points = text.match(/可用积分余额:\s*([\d,，]+)/)?.[1]
+        if (email && points) {
+            const acc = target(email)
+            const balance = Number(points.replaceAll(',', '').replaceAll('，', ''))
+            acc.initialPoints ??= balance
+            return setBalance(acc, balance)
+        }
+    }
     if ((entry.title === 'SEARCH-BING' || entry.title === 'SEARCH-BONUS') && (m = msg.match(RE.searchStart))) {
         return setBalance(target(), num(m[1]))
     }
@@ -268,10 +293,13 @@ function applyLivePoints(state, entry) {
     const source = pointEventSource(entry.title, msg)
     if (!source) return false
 
-    const gained = numericField(msg, 'pointsGained')
-    const balance = numericField(msg, 'currentBalance')
+    // DEBUG responses repeat the INFO completion event; they are diagnostic only.
+    if (entry.level === 'debug') return false
+    const gained = numericField(msg, 'pointsGained') ?? numericField(msg, '获得积分')
+    const balance = numericField(msg, 'currentBalance') ?? numericField(msg, '当前余额')
     if (gained == null && balance == null) return false
-    return addGain(target(), gained ?? 0, balance, source)
+    const cumulative = /^(?:读文赚积分完成|Read to earn complete|必应搜索完成|奖励搜索(?:完成|中止))/.test(msg)
+    return addGain(target(), gained ?? 0, balance, source, cumulative)
 }
 
 function applyEdgeBrowsing(state, entry) {
@@ -428,6 +456,27 @@ export function applyLogToRunState(state, entry) {
 
     let m
     switch (entry.title) {
+        case 'LOGIN-ONLY': {
+            const email = msg.match(/(?:^| \| )账户=(\S+@\S+)/)?.[1]
+            if (!email) break
+            state.mode = 'login'
+            state.accountsTotal = 1
+            state.currentEmail = email
+            ensureAccount(state, email)
+            if (entry.user) state.userToEmail[entry.user] = email
+            return 'login-start'
+        }
+        case 'LOGIN-ONLY-END':
+        case 'LOGIN-ONLY-ERROR': {
+            const email = msg.match(/(?:^| \| )账户=(\S+@\S+)/)?.[1]
+            const account = ensureAccount(state, email)
+            if (!account) break
+            state.mode = 'login'
+            state.finished = true
+            account.success = entry.title === 'LOGIN-ONLY-END'
+            if (!account.success) account.error = msg
+            return 'login-end'
+        }
         case 'RUN-START':
             if ((m = msg.match(RE.runStart))) {
                 state.version = m[1]
@@ -569,6 +618,7 @@ export function summarizeRunState(state) {
 
     const current = state.currentEmail ? state.accounts[state.currentEmail] : null
     return {
+        mode: state.mode,
         version: state.version,
         clusters: state.clusters,
         accountsTotal: state.accountsTotal,

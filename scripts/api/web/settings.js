@@ -336,7 +336,13 @@ export function createSettingsViews({ api, state, toast }) {
     async function viewTools() {
         const main = document.getElementById('main')
         const current = pageGuard(state, main)
-        main.replaceChildren(pageTitle('会话与诊断', '查看已保存的登录状态，快速定位运行异常。'))
+        main.replaceChildren(
+            pageTitle(
+                '会话与诊断',
+                '查看已保存的登录状态，快速定位运行异常。',
+                h('a', { class: 'btn', href: '#/accounts' }, '保存账号登录会话')
+            )
+        )
         const sessionsCard = h(
             'div',
             { class: 'card' },
@@ -360,7 +366,11 @@ export function createSettingsViews({ api, state, toast }) {
                     )
                     if (!data.count)
                         return sessionsCard.append(
-                            emptyState('暂无登录会话', '首次成功登录后，会话将自动保存在这里。', 'shield')
+                            emptyState(
+                                '暂无登录会话',
+                                '到账号管理点击「保存登录会话」，完成认证即可保存手机与电脑会话。',
+                                'shield'
+                            )
                         )
                     sessionsCard.append(
                         h(
@@ -409,7 +419,7 @@ export function createSettingsViews({ api, state, toast }) {
                                                                 button.disabled ||
                                                                 !current() ||
                                                                 !confirm(
-                                                                    `删除 ${session.email} 的会话？下次运行需要重新登录。`
+                                                                    `删除 ${session.email} 的会话？删除后可到账号管理点击「保存登录会话」重新认证。`
                                                                 )
                                                             )
                                                                 return

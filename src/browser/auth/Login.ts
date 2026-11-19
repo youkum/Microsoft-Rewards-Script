@@ -12,6 +12,7 @@ import { TotpLogin } from './methods/Totp2FALogin'
 import { CodeLogin } from './methods/GetACodeLogin'
 import { RecoveryLogin } from './methods/RecoveryEmailLogin'
 import { canPromptForInput } from './methods/LoginUtils'
+import { mapFlyoutToDashboard } from '../FlyoutDashboard'
 
 import type { Account } from '../../interface/Account'
 
@@ -103,7 +104,7 @@ export class Login {
         this.recoveryLogin = new RecoveryLogin(this.bot)
     }
 
-    async login(page: Page, account: Account) {
+    async login(page: Page, account: Account, requireVerifiedSession = false) {
         try {
             suspendMediaBlocking(this.bot, page.context())
             this.capturedUnknownUrls.clear()
@@ -197,7 +198,7 @@ export class Login {
                 throw new Error('Login timeout: exceeded maximum iterations')
             }
 
-            await this.finalizeLogin(page, account)
+            await this.finalizeLogin(page, account, requireVerifiedSession)
         } catch (error) {
             this.bot.logger.error(
                 this.bot.isMobile,
@@ -1180,7 +1181,7 @@ export class Login {
         }
     }
 
-    private async finalizeLogin(page: Page, account: Account) {
+    private async finalizeLogin(page: Page, account: Account, requireVerifiedSession = false) {
         this.bot.logger.info(this.bot.isMobile, 'LOGIN', '完成登录')
 
         await page.goto(REWARDS_BASE_URL, { waitUntil: 'networkidle', timeout: 10000 }).catch(() => {})
@@ -1206,10 +1207,15 @@ export class Login {
         await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
 
         this.bot.logger.info(this.bot.isMobile, 'LOGIN', '开始Bing会话验证')
-        await this.verifyBingSession(page, account)
+        const verified = await this.verifyBingSession(page, account)
+        if (requireVerifiedSession && !verified) {
+            throw new Error('Bing 登录会话未通过上游验证，未保存本次会话；请重试仅登录流程')
+        }
 
-        this.bot.logger.info(this.bot.isMobile, 'LOGIN', '获取奖励上下文')
-        await this.getRewardsSession(page)
+        if (!requireVerifiedSession) {
+            this.bot.logger.info(this.bot.isMobile, 'LOGIN', '获取奖励上下文')
+            await this.getRewardsSession(page)
+        }
 
         const context = page.context()
         const storageState = await context.storageState()
@@ -1224,8 +1230,9 @@ export class Login {
         this.bot.logger.info(this.bot.isMobile, 'LOGIN', '登录完成，会话已保存')
     }
 
-    async verifyBingSession(page: Page, account: Account) {
-        const url = URLs.auth.bingSignIn
+    async verifyBingSession(page: Page, account: Account): Promise<boolean> {
+        const country = this.bot.userData.geoLocale
+        const url = URLs.auth.bingSignInForCountry(country)
         const loopMax = 5
 
         this.bot.logger.info(this.bot.isMobile, 'LOGIN-BING', '验证Bing会话')
@@ -1261,16 +1268,23 @@ export class Login {
                 if (atBingPage) {
                     await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
 
-                    const signedIn = await page
-                        .waitForSelector(this.selectors.bingProfile, { timeout: 3000 })
-                        .then(() => true)
-                        .catch(() => false)
-
-                    this.bot.logger.debug(this.bot.isMobile, 'LOGIN-BING', `找到个人资料元素: ${signedIn}`)
-
-                    if (signedIn || this.bot.isMobile) {
-                        this.bot.logger.info(this.bot.isMobile, 'LOGIN-BING', 'Bing会话验证成功')
-                        return
+                    try {
+                        const response = await page.request.get(URLs.bing.rewardsFlyoutForCountry(country), {
+                            timeout: 10000
+                        })
+                        if (response.ok()) {
+                            const dashboard = mapFlyoutToDashboard(await response.json())
+                            if (dashboard.dataQuality?.balance && dashboard.dataQuality.search) {
+                                this.bot.logger.info(
+                                    this.bot.isMobile,
+                                    'LOGIN-BING',
+                                    'Bing会话验证成功（上游余额与额度已核实）'
+                                )
+                                return true
+                            }
+                        }
+                    } catch {
+                        this.bot.logger.debug(this.bot.isMobile, 'LOGIN-BING', '上游尚未返回已登录的奖励数据')
                     }
                 }
 
@@ -1285,6 +1299,7 @@ export class Login {
                 `验证错误: ${error instanceof Error ? error.message : String(error)}`
             )
         }
+        return false
     }
 
     private async getRewardsSession(page: Page) {

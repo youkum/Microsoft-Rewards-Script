@@ -157,7 +157,15 @@ export function mapFlyoutToDashboard(data: RewardsFlyoutData): DashboardData {
 
     return {
         dashboard,
-        profile
+        profile,
+        dataQuality: {
+            source: 'bing-flyout',
+            balance: validPoints(flyoutStatus.availablePoints) || validPoints(userInfo.balance),
+            search:
+                Array.isArray(counters.PCSearch ?? counters.pcSearch) ||
+                Array.isArray(counters.MobileSearch ?? counters.mobileSearch),
+            activities: true
+        }
     } as DashboardData
 }
 
@@ -167,11 +175,16 @@ function sumCounterMaximum(counters?: Array<{ pointProgressMax: number }>): numb
 }
 
 function numberOrFallback(primary: unknown, fallback: unknown): number {
-    const primaryNumber = Number(primary)
-    if (Number.isFinite(primaryNumber)) return primaryNumber
+    if (validPoints(primary)) return Number(primary)
+    return validPoints(fallback) ? Number(fallback) : 0
+}
 
-    const fallbackNumber = Number(fallback)
-    return Number.isFinite(fallbackNumber) ? fallbackNumber : 0
+function validPoints(value: unknown): boolean {
+    return (
+        (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+        Number.isFinite(Number(value)) &&
+        Number(value) >= 0
+    )
 }
 
 function uniquePromotions(promotions: BasePromotion[]): BasePromotion[] {

@@ -1019,13 +1019,34 @@ web-managed accounts too.
   are rejected (matching the browser's limitation). Hard timeout via
   `API_PROXY_TEST_TIMEOUT_MS` (default 10000).
 
-All account write endpoints are gated by `API_ALLOW_ACCOUNT_WRITE`
+Account add/update/delete endpoints are gated by `API_ALLOW_ACCOUNT_WRITE`
 (default `true`).
+
+### `POST /accounts/:index/login`
+
+Authenticate one configured account and save its browser sessions without running
+Rewards activities. The account-management page exposes this as **保存登录会话**.
+Body: `{"platform": "mobile" | "desktop" | "both"}`; defaults to `both`, in
+mobile-then-desktop order. Each platform is saved immediately after authenticated
+regional Bing responses verify its balance and search quotas.
+
+Returns `202` with `started`, `mode: "login"`, `platform`, and the selected account.
+Invalid platforms return `400`; an active run returns `409`. Uses existing API-token
+or dashboard authentication and the same interactive log-page input for security
+email/code challenges. Cookie-authenticated requests require `X-Requested-With`.
+This endpoint uses the existing account configuration and does not modify accounts.
+
+Login maintenance skips Rewards activities, App activity tokens, daily/quiet-hour
+skip rules, and task notifications. The process exits after success or failure.
+`GET /history` includes maintenance runs with `mode: "login"`; points history and
+account win/points statistics exclude them. Authentication or upstream verification
+failure does not save an unverified session, and browser cleanup does not replace
+the previous saved session on failure.
 
 ### `GET /points/history`
 
 Persistent run history backed by `config/points-history.jsonl` (one JSON line
-per finished run, appended on every run exit, rotated at ~5 MB). Unlike
+per finished Rewards-task run, rotated at ~5 MB; login maintenance is excluded). Unlike
 `GET /history` this survives API restarts. Query parameters: `days` (1-3650,
 default 30), `limit` (1-5000, default 500).
 

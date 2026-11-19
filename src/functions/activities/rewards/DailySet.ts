@@ -4,6 +4,7 @@ import { PromotionActivityRunner } from './PromotionActivityRunner'
 
 export class DailySet extends BaseActivity {
     public async run(data: DashboardData): Promise<void> {
+        if (data.dataQuality?.activities === false) throw new Error('每日任务数据不可用，无法判断任务是否完成')
         const today = this.bot.utils.getFormattedDate()
         const pending =
             data.dashboard.dailySetPromotions[today]?.filter(item => !item.complete && item.pointProgressMax > 0) ?? []

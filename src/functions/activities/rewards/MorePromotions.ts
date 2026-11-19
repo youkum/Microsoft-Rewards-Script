@@ -4,6 +4,7 @@ import { PromotionActivityRunner } from './PromotionActivityRunner'
 
 export class MorePromotions extends BaseActivity {
     public async run(data: DashboardData): Promise<void> {
+        if (data.dataQuality?.activities === false) throw new Error('推广任务数据不可用，无法判断任务是否完成')
         const promotions = [
             ...new Map(
                 [

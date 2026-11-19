@@ -1,4 +1,10 @@
 export interface DashboardData {
+    dataQuality?: {
+        source: 'rewards-api' | 'bing-flyout' | 'local'
+        balance: boolean
+        search: boolean
+        activities: boolean
+    }
     dashboard: Dashboard
     status: Status
     catalog: Catalog

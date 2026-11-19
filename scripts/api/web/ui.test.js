@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createApi, esc, fmtInt, fmtTime, h, pageGuard } from './ui.js'
-import { buildAccountBody } from './accounts.js'
+import { buildAccountBody, createAccountsView } from './accounts.js'
 import { mergeLogs, createLogsView } from './logs.js'
 
 test('createApi sends JSON headers and returns parsed success payloads', async () => {
@@ -131,6 +131,51 @@ function find(node, predicate) {
     }
     return null
 }
+
+test('account session-save button starts only maintenance login and routes to code input logs', async () =>
+    withNativeDocument(async ({ main }) => {
+        const previousLocation = globalThis.location
+        globalThis.location = { hash: '#/accounts' }
+        const calls = [],
+            toasts = []
+        let finish
+        const pending = new Promise(resolve => {
+            finish = resolve
+        })
+        const view = createAccountsView({
+            state: { routeGeneration: 1, me: { authenticated: true, capabilities: { accountWrite: false } } },
+            toast: message => toasts.push(message),
+            api: async (route, options) => {
+                if (route === '/accounts')
+                    return { accounts: [{ index: 7, email: 'beta@example.test', proxy: null, source: 'env' }] }
+                calls.push({ route, options })
+                await pending
+                return { started: true }
+            }
+        })
+        try {
+            await view.viewAccounts()
+            const button = find(
+                main,
+                node => node.tagName === 'BUTTON' && node.children.some(child => child.textContent === '保存登录会话')
+            )
+            assert.ok(button, 'login is available for file-managed and web-managed accounts')
+            const click = button.events.get('click')
+            const started = click({ currentTarget: button })
+            await click({ currentTarget: button })
+            assert.equal(calls.length, 1, 'double click cannot start another login')
+            assert.equal(calls[0].route, '/accounts/7/login')
+            assert.deepEqual(calls[0].options.body, { platform: 'both' })
+            finish()
+            await started
+            assert.equal(globalThis.location.hash, '#/logs')
+            assert.ok(toasts[0].includes('验证码'))
+        } finally {
+            view.dispose()
+            if (previousLocation === undefined) delete globalThis.location
+            else globalThis.location = previousLocation
+        }
+    }))
 
 test('h sets false native checked/selected properties without present boolean attributes', async () =>
     withNativeDocument(() => {

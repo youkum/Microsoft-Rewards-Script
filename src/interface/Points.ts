@@ -20,6 +20,7 @@ export interface MissingSearchPoints {
 }
 
 export interface AccountAllPointsSummary {
+    balanceVerified?: boolean
     availablePoints: number
     lifetimePoints: number
     lifetimeRedeemed: number

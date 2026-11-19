@@ -70,6 +70,7 @@ export class ProcessManager extends EventEmitter {
 
         this.state = 'starting'
         this.runState = createRunState()
+        this.runState.mode = env.REWARDS_LOGIN_ONLY ? 'login' : 'tasks'
         this.startedAt = new Date().toISOString()
         this.lastExit = null
         this.currentArgs = args

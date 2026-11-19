@@ -5,6 +5,8 @@
 > 审查者请先完整阅读本文档,再按 §7 复现验证、按 §8 逐项审查。
 > 上游项目:[youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) `V4-china` 分支(GPL-3.0-or-later)。
 
+> 2026-11-19 更新：本文 §1–10 记录早期 WebUI 改造；积分接口、收益解析和独立登录流程的最新兼容要求见末尾 §11。
+
 ---
 
 ## 1. 改造任务(用户需求原文)
@@ -190,3 +192,12 @@ curl -s -b cookies.txt -X POST -H "content-type: application/json" \
 - 原始未改动的 `V4-china` 源码快照见交付包 `original-V4-china.zip`;逐文件差异见 `unified.diff`(由脚本生成,`\r\n` 已归一化为 `\n` 后对比)。
 
 — 生成于 2026-11-07,由上一轮 AI 改造会话(ZCode / GLM)出具
+
+## 11. 2026-11-19 积分接口与独立登录交接
+
+- **真实数据与降级数据分开判断**：`DashboardData.dataQuality` 标记余额、搜索和活动数据是否可信。区域 Flyout 接口是优先路径；浏览器备用请求通过共享 Cookie 的 `page.request` 执行。本地降级仍返回兼容结构，但不得把未知额度视为已完成，不得用未知起始/结束余额计算收益。
+- **单账号边界**：`BrowserFunc.resetAccountState()` 与账号入口重置余额和活动上下文，避免跨账号收益污染。日志标记保持兼容；DEBUG 活动响应不累计收益，阅读/搜索汇总仅补足同账号、同平台、同来源的累计值。
+- **仅登录维护**：`POST /accounts/:index/login` 通过 `REWARDS_LOGIN_ONLY` 选择 `mobile`、`desktop`、`both`；只过滤一个账号。使用配置中的代理、指纹和交互验证流程，区域 Bing 登录回跳与 Flyout 域名一致。保存前必须验证上游余额及额度，每端立即保存；失败清理不覆盖旧会话。
+- **维护运行隔离**：`ProcessManager` 启动前标记 `mode: login`，避免早期失败被写入积分历史。维护运行不执行积分活动、App 令牌请求、定时/每日跳过逻辑和任务通知，不计账号战绩；成功或失败后进程必须退出并释放面板运行锁。`GET /history` 保留维护记录，`GET /points/history` 排除维护记录。
+- **复验**：`npm run build`、`npm test`（本次 105 项）、`npm run test:log-parser`、修改文件 ESLint。`scripts/api/rewardsData.test.js` 覆盖区域 Cookie、数据可信度、跨账号状态、严格登录保存和进程退出；HTTP 与 UI 测试覆盖单账号过滤、平台校验、收益隔离和按钮交互。
+- **已验证范围**：已用真实保存会话核实余额和搜索额度，并实测部分每日/推广/阅读活动入账。搜索额度增加不等于可用余额已经入账，签到 HTTP 成功也不等于获得积分。原始服务器日志、会话、账号配置和部署截图仅保存在本地备份，不属于公开源码。

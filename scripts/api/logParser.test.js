@@ -14,6 +14,68 @@ function apply(state, raw, receivedAt) {
     return entry
 }
 
+test('counts real DEBUG/INFO activity pairs and reading summaries only once', () => {
+    const state = createRunState()
+    apply(state, line('alpha', 'ACCOUNT-START', 'Starting account: alpha@example.com | geoLocale: CN'))
+    apply(
+        state,
+        line(
+            'alpha',
+            'POINTS-ALL',
+            '\\n账号: alpha@example.com\\n可用积分余额: 1,936 分 | 历史总积分: 40,546 分\\n今日已获得: +70 分'
+        )
+    )
+    apply(state, line('alpha', 'URL-REWARD', '响应 | pointsGained=10 | currentBalance=1946', 'DEBUG', 'MOBILE'))
+    apply(
+        state,
+        line('alpha', 'URL-REWARD', 'UrlReward 完成 | pointsGained=10 | currentBalance=1946', 'INFO', 'MOBILE')
+    )
+    for (const balance of [1949, 1952]) {
+        apply(
+            state,
+            line(
+                'alpha',
+                'READ-TO-EARN',
+                `文章后的积分变化 | pointsGained=3 | currentBalance=${balance}`,
+                'DEBUG',
+                'MOBILE'
+            )
+        )
+        apply(
+            state,
+            line(
+                'alpha',
+                'READ-TO-EARN',
+                `已阅读第 1/10 篇文章 | pointsGained=3 | currentBalance=${balance}`,
+                'INFO',
+                'MOBILE'
+            )
+        )
+    }
+    apply(
+        state,
+        line('alpha', 'READ-TO-EARN', '读文赚积分完成 | pointsGained=6 | currentBalance=1952', 'INFO', 'MOBILE')
+    )
+    const account = state.accounts['alpha@example.com']
+    assert.equal(account.initialPoints, 1936)
+    assert.equal(account.live.balance, 1952)
+    assert.equal(account.live.gained, 16)
+    assert.deepEqual(account.live.bySource, { urlReward: 10, read: 6 })
+})
+
+test('counts localized search events and platform summaries without duplicating gains', () => {
+    const state = createRunState()
+    apply(state, line('alpha', 'ACCOUNT-START', 'Starting account: alpha@example.com | geoLocale: CN'))
+    for (const platform of ['MOBILE', 'DESKTOP']) {
+        apply(state, line('alpha', 'SEARCH-BING', '获得积分=3 | 当前余额=1003 | 查询="weather"', 'INFO', platform))
+        apply(state, line('alpha', 'SEARCH-BING', '必应搜索完成 | 获得积分=3 | 当前余额=1003', 'INFO', platform))
+    }
+    assert.equal(state.accounts['alpha@example.com'].live.gained, 6)
+    assert.equal(state.accounts['alpha@example.com'].live.bySource.search, 6)
+    apply(state, line('alpha', 'FLOW', '积分已收集 | 获得积分=3 | 现余额=1003 | 账户=alpha@example.com'))
+    assert.equal(state.accounts['alpha@example.com'].live.gained, 3)
+})
+
 test('parses the logger envelope and strips ANSI formatting', () => {
     const entry = parseLogLine(
         `\u001b[32m${line('account.n', 'LOGIN', 'Starting login process', 'INFO', 'MOBILE')}\u001b[39m`

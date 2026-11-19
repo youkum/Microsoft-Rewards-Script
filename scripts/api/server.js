@@ -290,7 +290,7 @@ pm.on('log', entry => {
 pm.on('exit', () => {
     try {
         const run = pm.getHistory()[0]
-        if (run) appendRunRecord(projectRoot, toHistoryRecord(run))
+        if (run && run.run?.mode !== 'login') appendRunRecord(projectRoot, toHistoryRecord(run))
     } catch (err) {
         log('WARN', 'Could not append points history:', err instanceof Error ? err.message : err)
     }
@@ -298,6 +298,7 @@ pm.on('exit', () => {
 
 function toHistoryRecord(entry) {
     return {
+        mode: entry.run?.mode ?? 'tasks',
         startedAt: entry.startedAt,
         endedAt: entry.endedAt,
         exit: entry.exit,
@@ -537,6 +538,7 @@ const requestHandler = async (req, res) => {
                     'POST /accounts',
                     'PATCH|DELETE /accounts/:index',
                     'POST /accounts/:index/proxy-test',
+                    'POST /accounts/:index/login',
                     'GET /sessions',
                     'GET /diagnostics',
                     'GET /events',
@@ -676,7 +678,10 @@ const requestHandler = async (req, res) => {
 
         // account overview
         if (method === 'GET' && pathname === '/accounts') {
-            const history = pm.getHistory().map(toHistoryRecord)
+            const history = pm
+                .getHistory()
+                .filter(entry => entry.run?.mode !== 'login')
+                .map(toHistoryRecord)
             const accounts = mergeAccountStats(accountsView(), history)
             return sendJson(res, 200, {
                 accounts,
@@ -784,6 +789,33 @@ const requestHandler = async (req, res) => {
             } catch (err) {
                 if (err.code === 'NOT_WEB_MANAGED') return sendJson(res, 409, { error: err.message, code: err.code })
                 return sendJson(res, 500, { error: err instanceof Error ? err.message : String(err) })
+            }
+        }
+
+        // Maintenance login uses the same account credentials and interactive input flow.
+        if (method === 'POST' && /^\/accounts\/\d+\/login$/.test(pathname)) {
+            const body = await readJsonObject(req)
+            const platform = body.platform ?? 'both'
+            if (!['mobile', 'desktop', 'both'].includes(platform)) {
+                return sendJson(res, 400, {
+                    error: '`platform` must be mobile, desktop, or both.',
+                    code: 'BAD_REQUEST'
+                })
+            }
+            try {
+                const selection = buildSingleAccountEnv(Number(pathname.split('/')[2]))
+                const info = pm.start({ env: { ...selection.env, REWARDS_LOGIN_ONLY: platform } })
+                return sendJson(res, 202, {
+                    started: true,
+                    mode: 'login',
+                    platform,
+                    selectedAccount: selection.account,
+                    ...info
+                })
+            } catch (err) {
+                if (err.code === 'ALREADY_RUNNING') return sendJson(res, 409, { error: err.message, code: err.code })
+                if (err.code === 'BAD_REQUEST') return sendJson(res, 400, { error: err.message, code: err.code })
+                return sendJson(res, 500, { error: err.message })
             }
         }
 

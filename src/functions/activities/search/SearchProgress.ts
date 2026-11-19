@@ -20,6 +20,9 @@ export class SearchProgress {
     public async getCounters(): Promise<Counters> {
         return this.bot.performance.measure('progress.read', async () => {
             const dashboard = await this.bot.browser.func.getDashboardData()
+            if (dashboard.dataQuality?.search === false) {
+                throw new Error('搜索额度数据不可用，无法判断任务是否完成')
+            }
             return dashboard.dashboard.userStatus.counters
         })
     }

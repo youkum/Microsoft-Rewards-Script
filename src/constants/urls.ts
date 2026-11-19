@@ -43,6 +43,10 @@ export const URLs = {
     },
     auth: {
         bingSignIn: `${BING}/fd/auth/signin?action=interactive&provider=windows_live_id&return_url=https%3A%2F%2Fwww.bing.com%2F`,
+        bingSignInForCountry: (country: string) => {
+            const origin = `https://${country.toUpperCase() === 'CN' ? 'cn' : 'www'}.bing.com`
+            return `${origin}/fd/auth/signin?action=interactive&provider=windows_live_id&return_url=${encodeURIComponent(origin + '/')}`
+        },
         loginLive: `${LOGIN_LIVE}/`,
         oauthAuthorize: `${LOGIN_LIVE}/oauth20_authorize.srf`,
         oauthRedirect: `${LOGIN_LIVE}/oauth20_desktop.srf`,
@@ -51,6 +55,8 @@ export const URLs = {
     bing: {
         origin: BING,
         rewardsFlyoutUserInfo: `${BING}/rewards/panelflyout/getuserinfo?channel=BingFlyout&partnerId=BingRewards`,
+        rewardsFlyoutForCountry: (country: string) =>
+            `https://${country.toUpperCase() === 'CN' ? 'cn' : 'www'}.bing.com/rewards/panelflyout/getuserinfo?channel=BingFlyout&partnerId=BingRewards`,
         search: (query: string, cvid: string) =>
             `${BING}/search?q=${encodeURIComponent(query)}&PC=U531&FORM=ANNTA1&cvid=${cvid}`
     },
