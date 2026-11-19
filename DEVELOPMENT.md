@@ -25,6 +25,8 @@ npm run test:platform:lock
 npm run benchmark:api
 ```
 
+格式检查由 `Validate` 和 PR 的 `Formatting Check` 执行；合入 `V4-china` 后，`Formatting Repair` 工作流运行 `npm run format`，有差异时向同一分支创建或更新修复 PR。自动创建 PR 需要在仓库 Actions 设置中允许 GitHub Actions 创建和批准拉取请求。使用默认 `GITHUB_TOKEN` 创建的 PR 不会自动触发其他 PR 工作流，审查前应手动运行 `Validate` 和 `Formatting Check` 并选择修复分支，或推送修复提交触发检查。
+
 `npm test` 自动包含 `scripts/api/*.test.js` 和 `scripts/api/web/*.test.js`。HTTP 合约测试复制代码到临时目录，使用假账号和有限本地 mock 进程。测试不需要真实凭证。
 
 `benchmark:api` 使用 100 个模拟账号、20 次历史记录，先断言优化前后响应相等，再比较中位数。一次 Windows x64 测量约为 22.8ms → 0.39ms；结果随硬件变化，不代表真实账号任务的运行时长。SSE 在线时每 5 秒只请求 `/points`；断线时恢复 `/status` 兜底。刷新控制器保证单个视图无并行刷新，并在退出或路由切换时取消请求和计时器。
