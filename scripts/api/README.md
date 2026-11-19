@@ -1,6 +1,6 @@
 # Microsoft Rewards Script Control API
 
-A small, dependency-free HTTP API that lets a dashboard or another local tool
+A Node.js HTTP API that lets the embedded dashboard or another local tool
 control and observe the Microsoft Rewards Script.
 
 The API can:
@@ -8,6 +8,7 @@ The API can:
 - start, stop, restart, and remotely shut down the bot process;
 - run every configured account, one specific account, or all accounts except a
   selected set;
+- authenticate and save sessions for one account without running Rewards tasks;
 - expose live process status and point totals;
 - stream structured logs over Server-Sent Events (SSE);
 - return recent errors, in-memory run history, configured account summaries,
@@ -18,8 +19,9 @@ The API can:
 - read the effective cron schedule and, in Docker API mode, persist and apply
   schedule changes without restarting the container.
 
-It uses only Node.js built-ins and follows the same ESM `.js` convention as the
-other scripts in the project.
+The HTTP server uses Node.js built-ins; proxy tests use the project's proxy-agent
+dependencies. API scripts follow the project's ESM `.js` convention. Current
+changes and verification scope are recorded in [the 2026-11-19 notes](../../RELEASE_NOTES_20261119.md).
 
 ---
 
@@ -54,6 +56,9 @@ other scripts in the project.
         - [`GET /errors`](#get-errors)
         - [`GET /history`](#get-history)
         - [`GET /accounts`](#get-accounts)
+    - [Embedded WebUI and account management](#embedded-webui-and-account-management)
+        - [`POST /accounts/:index/login`](#post-accountsindexlogin)
+        - [`GET /points/history`](#get-pointshistory)
     - [Session management](#session-management)
         - [`GET /sessions`](#get-sessions)
         - [`DELETE /sessions/:email`](#delete-sessionsemail)
@@ -119,11 +124,12 @@ restarts:
 - buffered logs;
 - live run state;
 - parsed errors;
-- completed run history;
+- completed runs returned by `/history`;
 - account statistics calculated from that history.
 
-The API does not create its own database. Config and schedule writes are both
-disabled by default and require separate opt-in environment variables:
+The API stores durable task history as JSONL and reuses the bot's session database.
+Standalone config and schedule writes are disabled by default and require separate
+opt-in environment variables; the supplied Compose configuration enables both:
 
 - `PUT` or `PATCH /config` updates `config.json`. The previous file is copied to
   `config.json.bak` on a best-effort basis before replacement.
@@ -135,9 +141,10 @@ disabled by default and require separate opt-in environment variables:
   bot's existing `sessions.db`. The API never exposes stored cookies or
   fingerprint contents and has no delete-all session route.
 
-All live logs, parsed run state, errors, history, and calculated account
-statistics remain memory-only. A dashboard can store those results separately
-when durable history is needed.
+Live logs, parsed state, `/history`, and account overview statistics remain
+memory-only. Completed Rewards-task runs are also written to
+`config/points-history.jsonl` for durable `/points/history` queries; login
+maintenance is excluded from that file and from account earnings statistics.
 
 ## Requirements
 
@@ -402,7 +409,7 @@ import { api } from './apiClient.js'
 ```
 
 Axios is required only by the consuming dashboard or client. The control API
-server itself remains dependency-free.
+server does not require Axios.
 
 ## Endpoint overview
 
@@ -417,6 +424,7 @@ server itself remains dependency-free.
 | `GET`  | `/logs`                         | Buffered structured logs.                                         |
 | `GET`  | `/errors`                       | Recent warning/error logs and per-account failures.               |
 | `GET`  | `/history`                      | Completed runs retained by this API process.                      |
+| `GET`  | `/points/history`               | Persistent Rewards-task history; excludes login maintenance.      |
 | `GET`  | `/accounts`                     | Safe summaries of configured accounts and recent run statistics.  |
 | `GET`  | `/sessions`                     | Stored account/platform session metadata without secret contents. |
 | `GET`  | `/diagnostics`                  | List available error-capture directories.                         |
@@ -427,17 +435,18 @@ server itself remains dependency-free.
 
 ### Control and write endpoints
 
-| Method   | Path               | Purpose                                                 |
-| -------- | ------------------ | ------------------------------------------------------- |
-| `POST`   | `/start`           | Start a bot run.                                        |
-| `POST`   | `/stop`            | Request graceful or forced process termination.         |
-| `POST`   | `/restart`         | Stop an active run, then start a new one.               |
-| `POST`   | `/shutdown`        | Stop the bot if needed and terminate the API process.   |
-| `DELETE` | `/sessions/:email` | Delete only one account's mobile and desktop sessions.  |
-| `PUT`    | `/config`          | Replace the complete config after validation.           |
-| `PATCH`  | `/config`          | Deep-merge a partial config after validation.           |
-| `PUT`    | `/schedule`        | Persist and immediately apply supplied schedule fields. |
-| `PATCH`  | `/schedule`        | Persist and immediately apply supplied schedule fields. |
+| Method   | Path                     | Purpose                                                         |
+| -------- | ------------------------ | --------------------------------------------------------------- |
+| `POST`   | `/start`                 | Start a bot run.                                                |
+| `POST`   | `/accounts/:index/login` | Authenticate one configured account and save verified sessions. |
+| `POST`   | `/stop`                  | Request graceful or forced process termination.                 |
+| `POST`   | `/restart`               | Stop an active run, then start a new one.                       |
+| `POST`   | `/shutdown`              | Stop the bot if needed and terminate the API process.           |
+| `DELETE` | `/sessions/:email`       | Delete only one account's mobile and desktop sessions.          |
+| `PUT`    | `/config`                | Replace the complete config after validation.                   |
+| `PATCH`  | `/config`                | Deep-merge a partial config after validation.                   |
+| `PUT`    | `/schedule`              | Persist and immediately apply supplied schedule fields.         |
+| `PATCH`  | `/schedule`              | Persist and immediately apply supplied schedule fields.         |
 
 ## Reading API state
 
@@ -819,7 +828,8 @@ console.log(data)
 
 ### `GET /history`
 
-Returns completed runs launched by the current API process, newest first.
+Returns completed runs launched by the current API process, newest first,
+including login maintenance with `mode: "login"` (ordinary runs use `"tasks"`).
 
 Query parameter:
 
@@ -891,8 +901,8 @@ console.log(data.runs)
 }
 ```
 
-This history is not durable. A dashboard that needs charts or long-term history
-should store the returned completion data in its own database.
+This endpoint is not durable. Use `GET /points/history` for persistent
+Rewards-task records; login maintenance remains only in `/history`.
 
 ### `GET /accounts`
 
@@ -968,15 +978,15 @@ Valid account locale values are normalized in this response: language uses canon
 ```
 
 The `runs`, `totalCollected`, `successStreak`, and `last*` fields are calculated
-from this API process's in-memory history and therefore reset after an API
-restart.
+from this API process's in-memory task history, excluding login maintenance,
+and therefore reset after an API restart.
 
 ## Embedded WebUI and account management
 
 Since the embedded WebUI update, the API server also serves a browser control
 panel from `/` (files under `scripts/api/web/`). The panel covers every control
-operation: run start/stop/restart (all or single accounts), account CRUD with
-per-account proxies and proxy testing, persistent points history, live SSE logs,
+operation: run start/stop/restart (all or single accounts), independent login,
+account CRUD with per-account proxies and proxy testing, persistent points history, live SSE logs,
 schedule editing, config editing, and session/diagnostics management. All
 pre-existing endpoints keep their semantics, so external dashboards such as
 [rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) keep working.
@@ -1035,6 +1045,11 @@ Invalid platforms return `400`; an active run returns `409`. Uses existing API-t
 or dashboard authentication and the same interactive log-page input for security
 email/code challenges. Cookie-authenticated requests require `X-Requested-With`.
 This endpoint uses the existing account configuration and does not modify accounts.
+It is a run-control operation, independent of the account CRUD write flag.
+
+For example, send `{"platform": "mobile"}` to save only the mobile session;
+send `{"platform": "both"}` or `{}` to process both platforms. In the WebUI,
+**只跑此号** runs Rewards tasks, while **保存登录会话** uses this maintenance endpoint.
 
 Login maintenance skips Rewards activities, App activity tokens, daily/quiet-hour
 skip rules, and task notifications. The process exits after success or failure.

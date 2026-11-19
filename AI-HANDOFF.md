@@ -1,203 +1,102 @@
-# AI-HANDOFF · 内嵌 WebUI 改造交接与审查指南
+# AI-HANDOFF · 当前实现交接与审查指南
 
-> **本文档面向后续接手/审查本代码库的 AI 编程代理(或人类工程师)。**
-> 由上一轮 AI 改造会话生成,自包含、无需原始对话上下文。
-> 审查者请先完整阅读本文档,再按 §7 复现验证、按 §8 逐项审查。
-> 上游项目:[youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) `V4-china` 分支(GPL-3.0-or-later)。
+本文面向接手或审查本仓库的工程师与 AI 编程代理，无需原始对话上下文。以 2026-11-19 积分接口与独立登录修复后的代码为基准；早期 WebUI 改造记录见 Git 历史及 [更新日志](CHANGELOG.md)。仓库为 [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) 的 `V4-china` 分支，许可为 GPL-3.0-or-later，派生关系见 [第三方声明](THIRD-PARTY-NOTICES.md)。
 
-> 2026-11-19 更新：本文 §1–10 记录早期 WebUI 改造；积分接口、收益解析和独立登录流程的最新兼容要求见末尾 §11。
+## 1. 当前范围与入口
 
----
+内嵌 WebUI 提供账号管理、代理测试、任务控制、交互日志、积分历史、通知预测、调度与会话诊断。常规任务负责执行积分活动；独立登录负责单账号认证和按平台保存会话。两种运行共用进程管理器，统计与通知分开处理。
 
-## 1. 改造任务(用户需求原文)
+| 模块         | 关键文件与职责                                                                                                      |
+| ------------ | ------------------------------------------------------------------------------------------------------------------- |
+| 运行入口     | `src/index.ts`：账号/集群调度、账号状态重置、`saveLoginOnly()`、任务结算与通知                                      |
+| 积分数据     | `src/browser/BrowserFunc.ts`、`FlyoutDashboard.ts`：区域数据读取、映射、余额探测与会话 checkpoint                   |
+| 类型与域名   | `src/interface/DashboardData.ts`、`Points.ts`、`src/constants/urls.ts`：数据可信度与区域 URL                        |
+| 登录认证     | `src/browser/auth/Login.ts` 及 `methods/`：状态机、安全邮箱/验证码交互、上游会话验证                                |
+| 账号配置     | `src/util/Load.ts`、`scripts/credentialEnv.cjs`、`scripts/api/envStore.js`、`accounts.js`：凭据解析、槽位合并与筛选 |
+| API/运行管理 | `scripts/api/server.js`、`processManager.js`：鉴权、维护入口、子进程生命周期与运行锁                                |
+| 积分展示     | `scripts/api/logParser.js`、`pointsHistory.js`、`scripts/rewardForecast.cjs`：实时增量、持久历史和预测              |
+| 前端         | `scripts/api/web/`：原生 ES modules，无独立构建；新模块需加入静态资源白名单                                         |
+| 部署         | `compose.yaml`、`compose.override.yaml`、两个 Dockerfile、`scripts/docker/entrypoint.sh`：API/cron 与持久目录       |
 
-1. 「将 web 控制面板内嵌,可以直接在 web 上面进行所有操作」
-2. 「添加刷取积分账号」(网页端增删改账号)
-3. 「查看积分获取情况」
-4. 「给这个项目加上代理 IP 的功能防止封号」
+## 2. 区域接口与数据可信度
 
-**范围约束**:机器人本体 TypeScript 仅改一处(`src/util/Load.ts`),其余改动全部位于免编译的 `scripts/api/` 与文档/配置;所有原有 HTTP 端点语义保持不变(旧外部面板 rewards-dashboard 完全兼容)。
+`getDashboardData()` 的实际顺序：
 
-## 2. 需求 → 实现映射
+1. 配置的 HTTP 客户端请求区域 Flyout。
+2. 同一区域 Flyout，经浏览器 `page.request.get` 共享 Cookie 请求。
+3. 旧 `rewards.bing.com/api/getuserinfo`：同账号尚未失败时最多尝试两次；失败后跳过旧接口，下一账号重置。
+4. 本地兼容对象，余额、搜索、活动数据明确标记为未核实。
 
-| 需求             | 实现                                                                                             | 关键文件                                         |
-| ---------------- | ------------------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| 内嵌面板         | 控制 API 直接静态托管原生 JS 单页应用(无构建、无 CDN),登录 + 7 个功能页                          | `scripts/api/web/*`、`server.js`                 |
-| 网页操作全部能力 | 启停/重启(全部/单账号)、日志 SSE、调度编辑、配置编辑、会话与诊断(均对接既有端点)                 | `web/app.js`                                     |
-| 网页添加账号     | 账号 CRUD API,写入 `config/accounts.env`;与 `.env` 按**槽位块级合并**(网页优先);机器人侧叠加读取 | `envStore.js`、`accounts.js`、`src/util/Load.ts` |
-| 查看积分         | 每次运行结束持久化到 `config/points-history.jsonl`,新增聚合端点;面板含 SVG 柱状图                | `pointsHistory.js`、`server.js`、`web/app.js`    |
-| 代理防封         | 每账号代理配置可视化(浏览器+查询源同源出口),新增代理连通性测试(出口 IP/国家/延迟)                | `proxyTester.js`、`envStore.js`、`web/app.js`    |
+CN 使用 `cn.bing.com`，其他地区使用 `www.bing.com`。请求 Cookie 按目标 URL 过滤，Referer、Origin 及登录回跳域名保持一致。浏览器备用请求采用 `page.request`，避免页面跨域 Fetch 的 CORS 问题。
 
-## 3. 文件变更清单
+余额读取另外可以探测浏览器 Flyout、DOM 文本与 React 快照，不应将它们写成完整 Dashboard 的统一六级流水线。余额可读不代表任务列表或配额可用。
 
-### 3.1 新增(8 个)
+- `DashboardData.dataQuality` 标记 `source`、`balance`、`search`、`activities`。
+- `AccountAllPointsSummary.balanceVerified` 表示汇总余额是否核实。
+- 缺失额度或活动列表不能当作完成的 `0/0`。依赖该数据的任务必须受控报错。
+- 未知起始或最终余额不能结算成功收益。搜索额度增长和签到 HTTP 200 不单独证明入账。
+- 每账号重置余额、活动上下文与降级状态，避免跨账号污染。
 
-| 文件                                           | 职责                                                                                                                                                                                   |
-| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/api/envStore.js`                      | `.env`/`accounts.env` 解析(格式兼容 `lib.js loadEnvFile` 与 `Load.ts`)、槽位块级合并读取、账号增删改(原子写+首次写 `.bak` 备份)、字段校验(邮箱/TOTP Base32/代理协议白名单/端口/BCP 47) |
-| `scripts/api/proxyTester.js`                   | 经代理请求 IP 回显服务(`https-proxy-agent`/`socks-proxy-agent`),返回出口 IP/国家/延迟;SOCKS 认证按浏览器限制拒绝;硬超时保护                                                            |
-| `scripts/api/pointsHistory.js`                 | JSONL 追加(5MB 轮转)与按天/按账号聚合查询                                                                                                                                              |
-| `scripts/api/envStore.test.js`                 | envStore 单元测试(合并语义、增删改、校验、槽位分配)                                                                                                                                    |
-| `scripts/api/pointsHistory.test.js`            | pointsHistory 单元测试(聚合、过滤、轮转、坏行容错)                                                                                                                                     |
-| `scripts/api/web/index.html`                   | 面板外壳                                                                                                                                                                               |
-| `scripts/api/web/app.js`                       | 全部前端逻辑(hash 路由、`h()` DOM 构建、SSE、7 个视图)。**渲染只用文本节点,`h()` 的 `html` 键分支从未使用**                                                                            |
-| `scripts/api/web/style.css`、`web/favicon.svg` | 样式与图标                                                                                                                                                                             |
+## 3. 单账号保存登录会话
 
-### 3.2 修改(9 个)
+面板“账号管理”的 **保存登录会话** 调用 `POST /accounts/:index/login`。请求体的 `platform` 支持 `mobile`、`desktop`、`both`（默认，手机端先行）。返回 202，包含 `mode: "login"`、平台与所选账号；无效平台返回 400，已有运行返回 409。完整契约见 [API 文档](scripts/api/README.md#post-accountsindexlogin)。
 
-| 文件                      | 改动概要                                                                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `scripts/api/server.js`   | ①静态文件服务(白名单 Map,无目录穿越);②会话认证(`POST /auth/login                                                                                       | logout`、`GET /auth/me`,HMAC Cookie,登录限流 10 次/15 分钟);③全局鉴权改造(`authVia`: token/session/open)与 CSRF 头校验;④账号 CRUD + 代理测试 + `/points/history` 端点;⑤`pm.on('exit')` 持久化运行记录;⑥启动日志与索引更新 |
-| `scripts/api/accounts.js` | 默认 env 源改为 `getMergedAccountEnv()`(合并 `.env` + `accounts.env`);`loadAccounts` 增加 `hasPassword`/`saveFingerprint`/`proxy.http` 字段(只增不改)  |
-| `src/util/Load.ts`        | `ensureEnvLoaded()` 末尾新增 `applyAccountsEnvOverlay()`:读取 `config/accounts.env`,按槽位**整槽替换** `process.env` 中的 `ACCOUNT_*` 键。其余逻辑未动 |
-| `compose.yaml`            | `API_MODE: 'true'`、`ports: '8890:3010'`、`API_ALLOW_ACCOUNT_WRITE: 'true'` 默认开启;注释更新                                                          |
-| `env.example`             | 面板登录、`API_ALLOW_ACCOUNT_WRITE`、`API_TOKEN` 说明重组                                                                                              |
-| `package.json`            | 依赖 +`https-proxy-agent@^7`、`+socks-proxy-agent@^8`;脚本 +`test:api`                                                                                 |
-| `README.md`               | Docker 第 5 步改为内嵌面板;「控制 API 与面板」章节重写;特性列表更新                                                                                    |
-| `CHANGELOG.md`            | 新增 2026-11-07 条目                                                                                                                                   |
-| `AGENT.md`、`CLAUDE.md`   | 各加一段指向本文档的指引(内容未改)                                                                                                                     |
-| `scripts/api/README.md`   | 新增「Embedded WebUI and account management」章节(会话认证、账号 CRUD、`GET /points/history` 文档)                                                     |
+`buildSingleAccountEnv()` 只选择一个配置账号，并设置 `ACCOUNTS_FILTERED`；通过 `REWARDS_LOGIN_ONLY` 进入维护分支。使用已有账号的密码、代理和指纹，先尝试复用会话，安全邮箱/验证码继续通过实时日志页输入。
 
-### 3.3 未动但审查时需对照的文件
+维护调用 `login(page, account, true)`，手机端和电脑端都必须通过上游认证余额及搜索额度验证才能保存。每端立即保存并 checkpoint；失败不保存未核实会话，浏览器失败清理不覆盖旧会话。部分平台已成功保存、后续平台失败时，应如实显示结果。
 
-- `scripts/api/processManager.js` / `logParser.js` — 运行状态与日志解析,**未改动**;持久化通过既有 `exit` 事件在 server.js 侧完成。
-- `scripts/api/lib.js`、`../env.js` — env 解析约定(节选格式语义在 envStore 中有镜像实现)。
-- `src/util/Proxy.ts` — `BROWSER_PROXY_PROTOCOLS` 在 envStore.js 中被镜像为 JS 常量(scripts 无法 import TS),**两处需同步维护**。
-- `CLAUDE.md`/`AGENT.md`/`VIBECODING.md`/`.cursorrules` — 上游 AI 协作约定,§6 不变量摘自其中。
+仅登录跳过 Rewards 活动上下文初始化、奖励 workers、App 活动令牌、每日/静默时间跳过规则和任务通知。成功或失败均显式退出，释放面板运行锁。
 
-## 4. 架构与数据流
+`ProcessManager` 在第一条日志前标记 `mode: "login"`，包括早期失败。`GET /history` 保留维护运行；`GET /points/history`、账号运行战绩、收益与预测样本排除维护运行。该端点使用运行控制权限和既有配置，不受账号增删改写入开关限制。
 
-```
-浏览器 ──(Cookie 会话 或 API_TOKEN)──▶ server.js (:3010, Docker 映射 8890)
-                                          │
-              ┌───────────────────────────┼──────────────────────────────┐
-        静态: web/ 白名单文件        数据端点(既有,语义不变)          新增端点
-                                    /status /points /logs /events    /auth/login|logout|me
-                                    /config* /schedule* /sessions*   POST|PATCH|DELETE /accounts[/:index]
-                                    /start /stop /restart /shutdown  POST /accounts/:index/proxy-test
-                                    /history /diagnostics            GET  /points/history
-                                          │
-                                     ProcessManager(未改)
-                                          │ spawn node dist/index.js
-                                          ▼
-                                    机器人(Load.ts)
-                              .env ──叠加──▶ config/accounts.env(槽位块级替换)
-                                          │
-                              运行结束 exit 事件 ▶ pointsHistory.js ▶ config/points-history.jsonl
-```
+## 4. 账号、鉴权与调度契约
 
-**账号双源合并语义(核心)**:源优先级 `config/accounts.env` > `.env`;以**槽位**(ACCOUNT_N_*)为单位整槽替换,不做字段级混合;编号不要求连续。API 侧(`envStore.getMergedAccountEnv`)与机器人侧(`Load.ts applyAccountsEnvOverlay`)实现同一语义。
+- `config/accounts.env` 优先于 `.env`，按 `ACCOUNT_N_*` 整槽替换，不按字段混合；编号可不连续。API 与机器人使用一致语义，筛选运行禁止重新载入全量账号。
+- WebUI 写入 `config/accounts.env`，不改写 `.env`。未被 Web 配置覆盖的基础槽位显示为 `.env` 来源，编辑/删除返回 `NOT_WEB_MANAGED`；不要承诺所有基础账号可直接编辑。
+- 凭据文件按数据解析，禁止 Shell `source`、`.`、`eval`。特殊字符与 JSON 双引号转义的兼容要求见 [升级指南](UPGRADE_GUIDE.md#41-凭据文件解析已变更禁止-shell-source)。编辑时空白凭据保留旧值，清除需明确操作。
+- API Token 与面板 HMAC/HttpOnly Cookie 认证并存，Cookie 写操作要求 `X-Requested-With`。`/events` 可使用查询参数 token，其余端点不接受该方式。未配置两种凭据时原生 API 可进入 open 模式；默认 Compose 要求 Token，并应配置面板密码。
+- Docker 宿主机默认绑定 `127.0.0.1:8890`；容器内为 `0.0.0.0:3010`。远程访问按升级指南使用 SSH 隧道。
+- 账号、行为配置、调度及环境覆盖写入开关独立；默认 Compose 会合并 override，当前禁用 `API_ALLOW_ENV_OVERRIDES`。
+- 生产调度持久化并应用 Linux cron；失败恢复旧文件并尝试恢复旧 cron。预览仅保存临时演示计划。已保存的计划优先于初始环境，维护前显式停用它。
+- 会话与配置仍可能明文存储。POSIX 权限限制不代表应用加密；Windows 需检查 NTFS ACL。不得发布运行凭据或私有证据。
 
-## 5. 关键设计决策(审查重点)
+## 5. 日志、历史与前端契约
 
-| #   | 决策                                                                                       | 理由                                                                                                                           | 审查关注点                                                                                                                                                    |
-| --- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1  | 面板内嵌进控制 API 进程,而非移植外部 React 面板                                            | 外部面板无账号 CRUD/代理测试能力;引入构建链维护成本高;单端口单容器符合用户「内嵌」诉求                                         | web/app.js 体量(~840 行)与可维护性;无框架的手写 DOM 是否可接受                                                                                                |
-| D2  | 账号写入独立文件 `config/accounts.env`,不改写 `.env`                                       | `.env` 是用户手工域(Docker `env_file` 在容器启动时读取,容器内无此文件);`config/` 在 Docker 已挂载持久化                        | 合并语义是否可能产生槽位歧义;`findEnvFile` 顺序(projectRoot 优先,cwd 兜底)与 `Load.ts`(cwd 优先)在 cwd≠root 时理论不一致——实际部署 cwd==root,已在代码注释说明 |
-| D3  | 会话认证 + 保留 API_TOKEN;Cookie 写操作要求 `X-Requested-With`                             | 兼容旧工具;CSRF 防御(依赖自定义头 + SameSite=Lax + JSON Content-Type)                                                          | **open 模式**(TOKEN 与 DASHBOARD_PASSWORD 均未设置)下鉴权完全放开(维持上游行为,仅限回环默认绑定);登录限流按 socket 地址,反向代理后所有客户端共享限额          |
-| D4  | 会话密钥:`DASHBOARD_SESSION_SECRET` > `API_TOKEN` > 持久化随机值(`config/.session-secret`) | 重启后会话不失效;无凭据时也可用                                                                                                | 密钥文件权限(mode 0600,Windows 上等效性有限)                                                                                                                  |
-| D5  | 代理测试用 `https-proxy-agent`+`socks-proxy-agent` 而非复用 impit                          | 与 `BROWSER_PROXY_PROTOCOLS` 对齐;SOCKS 认证被显式拒绝(与 Patchright 行为一致);硬超时(请求 timeout 之外再套 `withHardTimeout`) | TLS 校验对测试请求关闭(`rejectUnauthorized:false`)——仅用于连通性探测,不处理敏感数据                                                                           |
-| D6  | 积分历史 JSONL 追加 + 5MB 轮转,置于 `config/`                                              | Docker 挂载目录,升级重建不丢                                                                                                   | 记录含账号邮箱与错误文本(敏感级别与日志一致);无并发写(单进程)                                                                                                 |
-| D7  | `.env` 账号在面板中只读(source 标识)                                                       | 避免 WebUI 静默改写用户手工文件;职责清晰                                                                                       | UX 代价:用户需手动同步 `.env` 账号                                                                                                                            |
+保持 `FLOW`、`ACCOUNT-START`、`RUN-END`、`POINTS-ALL` 等解析标记。改日志时同步 `logParser.js` 与测试。DEBUG 活动响应只作诊断；INFO 增量与阅读/搜索累计汇总按同账号、平台、来源补足差额，不能双计。
 
-## 6. 不变量(上游 AI 协作文档要求,本次改造必须未破坏)
+API 管理的积分任务结束后追加 `config/points-history.jsonl`，约 5 MB 轮转；直接 `npm start` 不负责该持久历史。`/history` 为有数量上限的内存记录，API 重启后丢失；积分历史不会丢失。未知余额及不足样本不能产生确定的兑换预测。
 
-1. **日志关键字 `FLOW` / `RUN-END` 等解析关键字不得改动** —— 未改 `logParser.js`/机器人日志输出;server.js 侧仅消费。
-2. **积分 API 字段结构保持** —— `toHistoryRecord` 仅**新增** `totals` 与 `accounts[].balance` 字段(加法);`GET /accounts` 响应仅新增 `hasPassword`/`saveFingerprint`/`proxy.http`/`source`/`webManaged`/`accountsEnvPath`。
-3. **既有端点语义不变** —— 全部保留原路径/方法/状态码;写能力仍受 `API_ALLOW_CONFIG_WRITE`/`API_ALLOW_SCHEDULE_WRITE`/`API_ALLOW_ENV_OVERRIDES` 独立开关控制(默认不变);新增 `API_ALLOW_ACCOUNT_WRITE`(默认 true)。
-4. **登录/调度/会话存储机制未动** —— `processManager.js`、`scheduleStore.js`、`sessionStore.js`、`configEditor.js` 零改动。
+前端用文本节点构建内容，保持静态资源白名单、配置脱敏、凭据保留/清除语义、SSE 合并与刷新取消。保存通知设置和摘要预览不发送消息；真实通知送达需要独立验证。
 
-## 7. 构建与验证步骤(可复现)
+## 6. 可复现验证与已验证范围
 
-> 前置:Node.js ≥ 24(本工作区用 v24.10.0 便携版)。`scripts/api` 全部为纯 JS,只有 `npm run build`(tsc)需要 devDependencies。
+使用 Node.js 24，在目标提交干净检出中执行：
 
 ```bash
-# 0) 运行时配置(仓库不含 config.json,由 example 复制)
-#    Windows: copy config.example.json config.json   Linux/macOS: cp config.example.json config.json
-cp config.example.json config.json
-
-# 1) 安装与构建
-npm install
-npm run build            # rimraf dist && tsc && copyAssets —— 必须零错误
-
-# 2) 单元测试(19 个用例)
-node --test scripts/api/envStore.test.js scripts/api/pointsHistory.test.js scripts/api/logParser.test.js
-# 期望:tests 19 / pass 19 / fail 0
-
-# 3) lint(仅本次新增/改动文件;上游现有文件存在历史告警,不在本次范围)
-npx eslint scripts/api/envStore.js scripts/api/pointsHistory.js scripts/api/proxyTester.js scripts/api/accounts.js scripts/api/server.js
-
-# 4) API 冒烟(准备 .env:见 env.example;必须设置 DASHBOARD_PASSWORD)
-npm run api              # 默认 127.0.0.1:3010;启动日志应含 "(WebUI: http://...)" 与账号写入开关状态
-
-curl -s http://127.0.0.1:3010/health            # {"ok":true,...,"authRequired":true}
-curl -s http://127.0.0.1:3010/auth/me           # authenticated:false + capabilities
-curl -s -i -X POST -H "content-type: application/json" \
-     -d '{"username":"admin","password":"<你的密码>"}' http://127.0.0.1:3010/auth/login
-# → 200 + Set-Cookie: mrs_dashboard=...(HttpOnly; SameSite=Lax)
-# 用 -c cookies.txt 保存后:
-curl -s -b cookies.txt http://127.0.0.1:3010/accounts
-curl -s -b cookies.txt -X POST -H "content-type: application/json" \
-     -H "x-requested-with: XMLHttpRequest" \
-     -d '{"email":"t1@example.com","password":"pw","proxy":{"url":"http://203.0.113.9:8080"}}' \
-     http://127.0.0.1:3010/accounts              # 201 → 检查 config/accounts.env
-# CSRF 负例:同请求去掉 x-requested-with 头 → 403 CSRF
-# .env 账号删除负例:DELETE /accounts/<env槽位> → 409 NOT_WEB_MANAGED
-
-# 5) 浏览器走查
-# 打开 http://127.0.0.1:3010/ → 登录 → 总览(SSE 徽标变绿)→ 账号管理(新增弹窗/代理测试)
-# → 积分历史 → 实时日志 → 调度(未开写开关时保存按钮禁用并提示)→ 配置 → 会话与诊断
+npm ci --include=optional --ignore-scripts
+npm run build
+npm test
+npm run test:log-parser
+npm run test:performance
+npm run test:preview
+npm run test:platform:lock
+npm run lint
+npm run format:check
 ```
 
-本工作区已完成上述全部步骤(含假账号运行冒烟:启动→日志流→停止→`points-history.jsonl` 落盘),证据见交付包 `evidence/` 截图。
+需要本地浏览器运行时安装 `npm run install:browser`；Docker 按各 Dockerfile 安装对应浏览器与原生依赖。使用 `npm run preview` 验证模拟面板，不输入真实凭据。具体测试职责和跨架构检查见 [开发指南](DEVELOPMENT.md) 与 [验收指南](CODEX_INSPECTION_GUIDE.md)。
 
-## 8. 审查清单(逐项核对)
+2026-11-19 源码修复验证记录：构建通过，核心/API/WebUI 105 项、性能 8 项、预览 5 项通过；日志解析器 11 项包含在 105 项中。全仓 ESLint 为 0 错误、3 个既有 `any` 警告，已跟踪且支持的文件格式检查通过。测试数量是该次记录，后续以目标提交实际结果为准。文档修订只需格式、链接及源码一致性检查。
 
-**正确性**
+修复提交 `bfb2bcd` 的 [CI](https://github.com/youkum/Microsoft-Rewards-Script/actions/runs/44448717681) 已全部通过，包含 validate 与两架构 × 两 Dockerfile 的四个原生容器任务。后续发布需重新核对目标提交。
 
-- [ ] `envStore.js`:`loadAccountPairs` 块级合并是否可能丢槽位(注意:`.env` 中**空值键**如 `ACCOUNT_2_EMAIL=` 会被 `accountIndexesFromEnv` 过滤,两侧行为一致?)
-- [ ] `envStore.js` `quoteValue`:含空格/引号值写入带双引号,读取端(`lib.js`/`Load.ts`)剥引号——特殊值(`#`、尾随空格、`"`)往返是否无损(参考 envStore.test.js)
-- [ ] `updateAccount` 的「未提供字段保留、空串清除」语义与前端弹窗(编辑时密码留空=保持)是否一致
-- [ ] `server.js` `authVia`:TOKEN 设置时 session-only 请求是否正确放行/拒绝;`/events` SSE 的 `?token=` 仅对 /events 生效(上游逻辑未动)
-- [ ] `serveStatic`:白名单 Map,确认无路径拼接注入;`/diagnostics/` 路径校验未放松
-- [ ] `proxyTester.js`:SOCKS+认证拒绝、硬超时、回显服务不可达时的降级链(ip-api.com → ipify)
-- [ ] `Load.ts` `applyAccountsEnvOverlay`:整槽删除+覆写;对 `getAccountIndexes()`(正则 `ACCOUNT_(\d+)_EMAIL`)的影响
-- [ ] 前端 XSS:全部渲染走 `createTextNode`;`esc()` 用于字符串插值处;`h()` 的 `html` 分支零使用(可考虑删除)
+部署环境完成 Docker 构建、健康检查，已保存会话的上游余额/额度读取通过；实测部分每日/推广/阅读活动入账，面板实际检查限于账号管理与登录交互。未据此确认完整 UI 视觉验收、通知送达或全部活动。分支源码更新、部署和正式 tag/Release 是不同状态，详见 [本次更新说明](RELEASE_NOTES_20261119.md)。
 
-**安全**
+`scripts/api/rewardsData.test.js` 覆盖区域 Cookie、数据可信度、账号重置、严格保存与退出；HTTP/UI 测试覆盖账号过滤、平台校验、按钮及维护统计隔离。部分核心回归是源码契约检查，不能代替真实上游响应验证。账号、日志、会话与截图仅存私有记录，不属于分发产物。
 
-- [ ] open 模式(无凭据)下账号写入仍可用——是否接受(回环默认 + 启动 ERROR/WARN 日志)
-- [ ] 会话 Cookie 未设 `Secure`(本设计面向 HTTP 局域网);反向代理部署时审查者应建议在代理层加 TLS
-- [ ] 登录限流的 IP 键在反代后的共享问题(见 D3)
-- [ ] `/points/history`、`/accounts` 输出含邮箱与错误详情——与上游日志端点敏感级别一致,确认可接受
+## 7. 审查与后续修改
 
-**兼容**
-
-- [ ] 对旧 rewards-dashboard:响应只增字段,语义未变(可对照 `scripts/api/README.md` 上游章节)
-- [ ] `package-lock.json` 仅新增 https-proxy-agent / socks-proxy-agent 依赖树
-- [ ] `compose.yaml`:`8890:3010` 映射与 entrypoint(`API_HOST=0.0.0.0`)匹配;`API_ALLOW_ACCOUNT_WRITE` 默认开启已注明
-
-## 9. 已知限制与未验证项(如实声明)
-
-1. **未用真实 Microsoft 账号验证**——机器人主流程(登录/搜索/积分)未动,但端到端积分入账无法在本环境确认。
-2. **Docker 构建未在本机执行**(环境无 Docker);仅静态核对 compose/entrypoint 逻辑。
-3. 代理测试依赖公网回显服务(`ip-api.com`/`ipify`),被测网络阻断二者时返回错误而非误报成功。
-4. 面板 UI 文案仅中文;`humanize.quietHours` 等少数配置项仍需 JSON 模式编辑(面板 JSON 编辑器需 `API_ALLOW_CONFIG_REVEAL=true`)。
-5. 本工作区 `.env` 为**测试凭据**(admin/test123456 与 example.com 假账号),交付包已排除 `.env`。
-6. eslint 检查仅覆盖本次新增/改动文件;上游既有文件的历史 lint 状态未处理。
-
-## 10. 回滚方式
-
-- 所有改动均为文件级,未改数据库/全局状态;将 §3.1 新增文件删除、§3.2 修改文件对照原始源码还原即可。
-- 原始未改动的 `V4-china` 源码快照见交付包 `original-V4-china.zip`;逐文件差异见 `unified.diff`(由脚本生成,`\r\n` 已归一化为 `\n` 后对比)。
-
-— 生成于 2026-11-07,由上一轮 AI 改造会话(ZCode / GLM)出具
-
-## 11. 2026-11-19 积分接口与独立登录交接
-
-- **真实数据与降级数据分开判断**：`DashboardData.dataQuality` 标记余额、搜索和活动数据是否可信。区域 Flyout 接口是优先路径；浏览器备用请求通过共享 Cookie 的 `page.request` 执行。本地降级仍返回兼容结构，但不得把未知额度视为已完成，不得用未知起始/结束余额计算收益。
-- **单账号边界**：`BrowserFunc.resetAccountState()` 与账号入口重置余额和活动上下文，避免跨账号收益污染。日志标记保持兼容；DEBUG 活动响应不累计收益，阅读/搜索汇总仅补足同账号、同平台、同来源的累计值。
-- **仅登录维护**：`POST /accounts/:index/login` 通过 `REWARDS_LOGIN_ONLY` 选择 `mobile`、`desktop`、`both`；只过滤一个账号。使用配置中的代理、指纹和交互验证流程，区域 Bing 登录回跳与 Flyout 域名一致。保存前必须验证上游余额及额度，每端立即保存；失败清理不覆盖旧会话。
-- **维护运行隔离**：`ProcessManager` 启动前标记 `mode: login`，避免早期失败被写入积分历史。维护运行不执行积分活动、App 令牌请求、定时/每日跳过逻辑和任务通知，不计账号战绩；成功或失败后进程必须退出并释放面板运行锁。`GET /history` 保留维护记录，`GET /points/history` 排除维护记录。
-- **复验**：`npm run build`、`npm test`（本次 105 项）、`npm run test:log-parser`、修改文件 ESLint。`scripts/api/rewardsData.test.js` 覆盖区域 Cookie、数据可信度、跨账号状态、严格登录保存和进程退出；HTTP 与 UI 测试覆盖单账号过滤、平台校验、收益隔离和按钮交互。
-- **已验证范围**：已用真实保存会话核实余额和搜索额度，并实测部分每日/推广/阅读活动入账。搜索额度增加不等于可用余额已经入账，签到 HTTP 成功也不等于获得积分。原始服务器日志、会话、账号配置和部署截图仅保存在本地备份，不属于公开源码。
+- 按 [验收指南](CODEX_INSPECTION_GUIDE.md) 检查未知数据、重复累计、账号隔离、维护运行退出与历史隔离。
+- 核对 API 文档、按钮文案、平台默认值、状态码、区域域名及降级顺序一致。
+- 行为改动同步 `CHANGELOG.md`、README、API 文档和相关工程/代理指导文件；正式发布核验相同提交 CI、tag 与镜像 revision。
+- 升级或回滚先停止写入，保留旧源码、镜像及匹配的配置/完整会话快照；按 [升级与回滚指南](UPGRADE_GUIDE.md) 操作，不通过删除会话或数据卷解决问题。

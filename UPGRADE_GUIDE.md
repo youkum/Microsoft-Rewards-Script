@@ -4,15 +4,24 @@
 
 ## 1. 适用场景与安全升级原则
 
-本指南适用于从任意旧版 `V4-china` 升级至最新版本，或在全新 Linux 服务器/Docker 环境下部署与维护。
+本指南用于 `V4-china` 的源码更新、正式版本部署与回滚。跨越多个旧版本时，应先核对中间版本的配置和持久化格式变化。
 
 - **核心主分支**：本项目代码统一维护在 **`V4-china`** 分支。
-- **无损升级保证**：已妥善处理账号合并（`.env` 与 `config/accounts.env`）、调度计划（`config/schedule.json`）与浏览器登录会话（`sessions/sessions.db`）。
+- **数据保留与复验**：保留账号合并（`.env` 与 `config/accounts.env`）、调度计划（`config/schedule.json`）和会话目录（默认 `sessions/`）。升级后逐项核对配置及上游认证，不能仅凭文件存在保证任意旧版无损迁移。
 - **停机备份铁律**：升级或迁移前，**务必先停止容器并完整归档备份**，杜绝 SQLite 会话库（WAL 模式）在写入中被直接复制导致文件损坏。
 
 ---
 
 ## 2. 这次更新改变了什么
+
+### 2026-11-19：积分接口与独立登录
+
+- 账号管理新增 **保存登录会话**，只登录该账号，默认手机端先行、电脑端随后；安全邮箱或验证码在实时日志页提交。每端核实上游余额和搜索额度后立即保存，完成或失败均退出释放运行锁。
+- `POST /accounts/:index/login` 支持 `mobile`、`desktop`、`both`（默认）。维护不执行积分任务、App 活动令牌、每日/静默时间跳过规则或任务通知；保留在 `/history`，不进入积分历史和账号战绩。失败不保存未验证会话，失败清理不覆盖旧会话。
+- 优先请求账号所在地区的 Flyout：CN 为 `cn.bing.com`，其他地区为 `www.bing.com`；HTTP 后采用共享 Cookie 的浏览器 `page.request`，旧 Rewards API 作为备用。
+- 未核实额度不算已完成，未知起止余额不结算成功收益；每账号重置状态，DEBUG 与阅读/搜索累计汇总不重复计算收益。额度变化、签到 HTTP 成功和实际余额入账分别核实。
+
+变更与验证范围见 [2026-11-19 更新说明](RELEASE_NOTES_20261119.md)。本次为开发分支源码更新，未新建正式版本标签；部署目标仍需核对提交与 CI。
 
 ### WebUI、性能与安全修复
 
@@ -59,7 +68,7 @@
 2. 按配置时区（Compose 默认 `Asia/Shanghai`）取最近最多 7 个完整自然日，不含今天。每个账号从首次有效历史观测日起计，窗口内缺失日计 0；同一天多次运行收益先相加。
 3. 至少有 3 个完整观察日且日均大于 0，才按 `向上取整(剩余积分 / 日均积分)` 估算；已经达标显示 0 天。
 4. 未设置门槛、缺少余额、历史不足、日均为 0 时明确显示未知/原因；本次收益不加入尚未结束的当天日均。
-5. 数据来自 `config/points-history.jsonl` 与轮转文件 `.1`，通常由 API 管理的任务结束后写入。直接执行 `npm start` 不负责生成这份持久历史，可能一直缺少预测样本。当前运行历史也不会在结束前成为完整自然日样本。
+5. 数据来自 `config/points-history.jsonl` 与轮转文件 `.1`，由 API 管理的积分任务结束后写入，排除仅登录维护。直接执行 `npm start` 不负责生成这份持久历史，可能一直缺少预测样本。当前运行历史也不会在结束前成为完整自然日样本。
 6. 预测只是历史估算，不保证未来收益、兑换库存或门槛不变。
 
 ## 3. 安全边界：仍然是单管理员、明文持久化
@@ -112,9 +121,9 @@ ssh -N -L 8890:127.0.0.1:8890 YOUR_SSH_USER@YOUR_SERVER
 - 默认执行 `docker compose` 会自动合并 `compose.yaml` 与 `compose.override.yaml`；当前附带 override 将 `API_ALLOW_ENV_OVERRIDES` 设为 `false`。核对服务器上是否另有本地 override，不要把历史本地文件带来的行为误认为新版默认值。显式使用 `-f` 时应逐个列出需要的文件，不能假定仍会隐式加载 override。
 - 用 `docker compose config --quiet` 检查插值和结构，避免输出展开后的敏感配置。
 
-## 5. 停机一致性备份（只在获批维护窗口执行）
+## 5. 停机一致性备份
 
-**现在不执行；现有部署按原样运行。**未来升级前，按以下顺序准备可恢复快照：
+在维护窗口按以下顺序准备可恢复快照；这些步骤会停止服务：
 
 1. 记录旧源码提交、实际启动命令、Compose 文件/override、镜像 ID、容器挂载路径和端口。给旧镜像加独立本地回滚标签，保留旧源码，避免新构建覆盖 `microsoft-rewards-script:china` 后失去旧镜像引用。不要清理镜像。
 2. 停用自动计划，阻止外部 cron/服务/CI 再触发任务；等待或通过面板停止活动任务。记录维护前原计划，供最终恢复使用。
@@ -129,41 +138,46 @@ ssh -N -L 8890:127.0.0.1:8890 YOUR_SSH_USER@YOUR_SERVER
 
 备份中的 `schedule.json` 可能仍为启用状态；恢复后第一次启动前必须重新核对。加密备份如有使用，必须验证外部解密及恢复过程；应用本身没有加密迁移或解密功能。
 
-## 6. 发布前放行清单
+## 6. 更新与正式发布检查
 
-- [ ] PR 完成审查，明确合并和发布批准；当前旧部署仍不变。
-- [ ] 改为未使用的新三段稳定版本，同步 `package.json` / 锁文件，确认 tag、Release、镜像版本均未占用。
-- [ ] API/Web、性能、隔离演示测试、构建、lint、格式、依赖审计和 shell fixture 重新通过。
-- [ ] 四个原生容器 CI job 全部通过：`amd64` / `arm64` × `Dockerfile` / `Dockerfile.cn`。
-- [ ] 完成真实浏览器交互走查、Linux cron 启停与故障恢复验收；如需生产 PushPlus，另获批准进行真实发送验证。
-- [ ] 正式发布成功，核对 Git tag 对应提交、镜像 digest、双架构 manifest 和 OCI revision，记录准确版本。
-- [ ] 维护窗口、停机快照和回滚演练获确认，才进入下面的部署步骤。
+- [ ] 记录目标提交，完成审查及与改动相关的构建、测试、lint、格式检查；纯文档更新检查格式、链接和源码一致性。
+- [ ] 部署前确认目标提交的四个原生容器 CI job：`amd64` / `arm64` × `Dockerfile` / `Dockerfile.cn`。单一机器构建成功不代替矩阵验证。
+- [ ] 完成所需浏览器交互、独立登录、Linux cron 与故障恢复验收；通知送达单独验证，并确保已获发送授权。
+- [ ] 记录旧版本/镜像与原计划，准备维护窗口、停机快照和回滚演练，再进行部署。
+
+创建正式 Release 时，另选择未使用的三段稳定版本，同步 `package.json` 与锁文件，执行完整发布验证、依赖审计与 shell fixture；发布后核对 tag、镜像 digest、双架构 manifest 和 OCI revision。开发分支源码更新不要求每次新建正式版本，不能把分支推送写成 Release 已发布。
 
 按 [验收指南](CODEX_INSPECTION_GUIDE.md) 复验目标提交；测试数量、容器矩阵与结果以该提交实际运行记录为准。
 
 ## 7. 生产环境标准升级与拉取命令（针对 V4-china 分支）
 
-在已有部署目录下执行平滑更新的标准流程如下：
+下面是已有 Linux 部署的源码更新示例，所有 `/path/to/...` 均为占位路径，请替换为实际位置。先按第 5 节停用自动计划、阻止其他触发源、记录旧提交和镜像，并确认回滚资料。正式标签部署应选择已核验的 tag/镜像，不能直接跟随开发分支。
 
 ### 步骤 A：停机并创建快照备份
 
 ```bash
 # 进入部署目录
-cd /opt/rewards/chiihero
+cd /path/to/deployment
 
-# 停止正在运行的容器
-docker compose down
+# 停止服务并确认所有写入者已停止
+docker compose stop -t 60 microsoft-rewards-script
+docker compose ps -a
 
-# 创建独立时间戳备份目录
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-BACKUP_DIR="/opt/rewards/backups/backup_${TIMESTAMP}"
+# 创建项目目录之外的受限备份目录
+umask 077
+BACKUP_TIME=$(date +%Y%m%d_%H%M%S)
+BACKUP_DIR="/path/to/private-backups/backup_${BACKUP_TIME}"
 mkdir -p -m 700 "$BACKUP_DIR"
 
-# 归档配置文件与环境变量
-cp .env "$BACKUP_DIR/.env"
-cp -r config "$BACKUP_DIR/config"
-cp -r sessions "$BACKUP_DIR/sessions"
-echo "已完整备份至: $BACKUP_DIR"
+# 停机后完整归档会话目录（含当时存在的 WAL/SHM），保留权限
+backup_paths=(.env config sessions compose.yaml)
+for extra in compose.override.yaml config.json clawbot-auth.json; do
+    if [ -e "$extra" ]; then backup_paths+=("$extra"); fi
+done
+# 使用其他会话路径或外置配置时，先调整上述清单
+tar -cpf "$BACKUP_DIR/state.tar" "${backup_paths[@]}"
+sha256sum "$BACKUP_DIR/state.tar" > "$BACKUP_DIR/state.tar.sha256"
+# 在受限目录核对清单、校验和并演练恢复；不输出凭据内容
 ```
 
 ### 步骤 B：拉取最新主分支代码
@@ -172,8 +186,11 @@ echo "已完整备份至: $BACKUP_DIR"
 # 获取并对齐最新 V4-china 主分支代码
 git fetch origin V4-china
 git checkout V4-china
-git pull origin V4-china
+git pull --ff-only origin V4-china
+git rev-parse HEAD
 ```
+
+有本地源码修改或分支分叉时先保留改动并处理差异，不用强制重置覆盖部署配置。
 
 ### 步骤 C：重新构建镜像并启动
 
@@ -183,16 +200,20 @@ docker compose up -d --build
 
 # 检查容器运行状态与健康检查
 docker compose ps
+# 日志可能含账号信息，仅在受限终端查看
 docker compose logs --tail 30
 ```
 
 ### 步骤 D：验证控制台与账号
 
-浏览器直接打开 `http://<服务器IP>:8890`，登录面板核验：
+在宿主机访问 `http://127.0.0.1:8890`，远程按第 4.3 节使用 SSH 隧道。登录面板并刷新页面后核验：
 
-1. 账号列表中各槽位账号是否均完整识别（密码、代理、TOTP 密钥均在）；
-2. 调度配置与行为配置是否正常；
-3. 点击某个账号的「只跑此号」单次执行验证，确认日志输出 `账户数: 1` 且成功复用既有 Session，无需重新登录。
+1. 检查账号槽位及密码/TOTP 存在标记、代理配置、历史和行为配置是否保留。脱敏字段不代表原始秘密已验证，不要通过 reveal 输出秘密。
+2. 确认维护期间调度仍停用，账号管理显示 **保存登录会话**。按钮缺失时核对源码提交、重建镜像并强制刷新页面。
+3. 点击目标账号的 **保存登录会话**；日志应只显示该账号的仅登录流程。需要安全邮箱或验证码时在实时日志页提交，两端上游余额与搜索额度核实后分别出现保存结果。
+4. 成功后进程退出码为 0、面板恢复空闲，`/history` 可见 `mode: "login"`；积分历史及账号战绩不增加维护运行。失败应明确提示并退出，不覆盖旧会话；某端已保存而另一端失败时分别核对。
+5. 如需核验普通积分任务，再使用 **只跑此号**，分别检查实际余额变化与各项任务结果。保存登录会话成功不保证所有活动均可入账。
+6. 手动验收通过后再恢复需要的原调度，核对实际 cron 状态。
 
 ## 8. 回滚：旧程序与匹配快照一起恢复
 

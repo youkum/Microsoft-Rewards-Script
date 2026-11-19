@@ -17,7 +17,7 @@
 - [一、项目全景与架构设计](#一项目全景与架构设计)
     - [1. 整体流转体系](#1-整体流转体系)
     - [2. 关键核心模块](#2-关键核心模块)
-- [二、六重积分探测降级体系（高可用）](#二六重积分探测降级体系高可用)
+- [二、区域积分读取与数据可信度](#二区域积分读取与数据可信度)
 - [三、自适应认证与弹窗拦截状态机](#三自适应认证与弹窗拦截状态机)
 - [四、WebUI 控制面板与 SSE 实时日志系统](#四webui-控制面板与-sse-实时日志系统)
 - [五、致谢与引用的开源项目](#五致谢与引用的开源项目)
@@ -40,7 +40,11 @@
        |
        +---> [3. 自适应智能登录] (Login.ts 状态机: 自动处理 KMSI/2FA/拦截页)
        |
-       +---> [4. 初始全量积分画像] (getAllAccountPoints 6重降级快照)
+       +---> [运行模式分支]
+       |         ├── 仅登录：核实上游余额/额度 → 每端保存 → 退出
+       |         └── 常规任务：继续下列积分流程
+       |
+       +---> [4. 初始全量积分画像] (getAllAccountPoints + balanceVerified)
        |
        +---> [5. 自动化任务流水线]
        |         ├── 必应桌面搜索 (国内热搜/本地题库/聚类扩展)
@@ -66,18 +70,22 @@
 
 ---
 
-## 二、六重积分探测降级体系（高可用）
+## 二、区域积分读取与数据可信度
 
-为了防止微软 Rewards 前端界面频繁迭代导致脚本崩溃，本项目实现了**6 级全自动积分降级探测**：
+`getDashboardData()` 按以下顺序读取 Dashboard。CN 账号使用 `cn.bing.com`，其他地区使用 `www.bing.com`，Cookie、Referer、Origin 与目标域名匹配。
 
-| 探测层级                      | 实现方式                                               | 适用场景                                        |
-| :---------------------------- | :----------------------------------------------------- | :---------------------------------------------- |
-| **Tier 1: 官方主接口**        | `https://rewards.bing.com/api/getuserinfo`             | 官方标准 API，速度最快，数据最全                |
-| **Tier 2: Flyout 接口**       | `https://www.bing.com/rewards/panelflyout/getuserinfo` | 桌面与移动端轻量悬浮窗接口                      |
-| **Tier 3: 浏览器内生 Fetch**  | 在真实页面上下文调用 `page.evaluate()` 执行内部 API    | 完美复用会话 Cookie，规避独立网络层代理指纹异常 |
-| **Tier 4: DOM 元素抽取**      | 抓取 `#id_rc`, `[data-bi-id="rewards-points"]` 等文本  | 接口全部失效时，直接从已渲染网页提取            |
-| **Tier 5: React Flight 快照** | 解析现代 Bing 页面的 RSC 数据流                        | 提取 React 虚拟 DOM 挂载的初始状态              |
-| **Tier 6: 基础保底兜底**      | 返回预置基础对象，数字全部置为安全值                   | 在上游无法返回数据时提供安全值                  |
+| 顺序 | 实现方式                                                    | 判定要求                                           |
+| :--- | :---------------------------------------------------------- | :------------------------------------------------- |
+| 1    | 区域 `/rewards/panelflyout/getuserinfo`，配置的 HTTP 客户端 | 映射认证状态与可用字段，记录数据质量               |
+| 2    | 同一区域接口，浏览器 `page.request.get`                     | 共享浏览器 Cookie，避免页面跨域 Fetch 的 CORS 问题 |
+| 3    | 旧 `rewards.bing.com/api/getuserinfo`                       | 同账号未失败时最多尝试两次，失败后跳过该旧接口     |
+| 4    | 本地兼容对象                                                | `dataQuality` 的余额、搜索、活动均为未核实         |
+
+余额读取另有浏览器 Flyout、DOM 文本与 React 快照探测；这些不是完整 Dashboard 的额外线性阶段。读取到余额也不能证明搜索额度或活动列表可用。
+
+`DashboardData.dataQuality` 保存 `source`、`balance`、`search`、`activities`，`AccountAllPointsSummary.balanceVerified` 表示余额是否核实。未知额度或活动列表不能解释为已完成的 `0/0`；未知起始或最终余额不能结算成功收益。缺少任务所需数据时受控报错，保留兼容结构不代表可以成功执行所有任务。
+
+账号入口重置余额、活动上下文和旧接口失败标记。日志解析时 DEBUG 活动响应不累计收益，INFO 增量与阅读/搜索累计汇总只补足差额；搜索额度增长或签到 HTTP 200 不能单独证明可用余额已入账。
 
 ---
 
@@ -85,8 +93,8 @@
 
 在 `src/browser/auth/Login.ts` 中维护了一套健壮的认证状态机：
 
-- `EMAIL_ENTRY`: 自动适配 `#i0116`, `input[name="loginfmt"]`, `#usernameEntry` 等所有新旧表单。
-- `PASSWORD_ENTRY`: 适配 `#i0118`, `input[name="passwd"]`, `#passwordEntry`。
+- `EMAIL_INPUT`: 自动适配 `#i0116`, `input[name="loginfmt"]`, `#usernameEntry` 等新旧表单。
+- `PASSWORD_INPUT`: 适配 `#i0118`, `input[name="passwd"]`, `#passwordEntry`。
 - `KMSI_PROMPT` (保持登录提示): 自动勾选“不再显示”并点击“是”。
 - `INTERSTITIAL_SKIP`: 自动识别并跳过“体验无密码”、“保护你的账户”、“添加备用邮箱”等微软阶段性拦截页。
 - `ERROR_ALERT`: 智能区分临时 Cookie 协议弹窗（自动点击同意关闭）与真正的密码错误/账号锁定。
@@ -95,7 +103,7 @@
 
 ## 四、WebUI 控制面板与 SSE 实时日志系统
 
-项目配套了专用的 Web 控制面板（默认运行于 `http://<服务器IP>:8890`）：
+项目配套内嵌 Web 控制面板。Docker 默认仅宿主机 `http://127.0.0.1:8890` 可访问，远程使用 [SSH 隧道](UPGRADE_GUIDE.md#43-认证端口和-compose-override)；原生 API 默认使用 `http://127.0.0.1:3010`。
 
 1. **工作模式**:
    Docker 容器内以 `API_MODE=true` 启动，主脚本通过 `scripts/api/server.js` 启动 3010 端口。
@@ -106,6 +114,12 @@
         [2026-10-31 11:00:00] [user] [INFO] MAIN [FLOW] 积分已收集 | 获得积分=45 | 现余额=12350 | 账户=user@example.com
         ```
     - 任何涉及日志重构的操作，请勿修改 `FLOW`、`ACCOUNT-START`、`RUN-END` 等关键字。
+3. **单账号保存登录会话**：
+    - 在“账号管理”点击目标账号的 **保存登录会话**，默认手机端先行、电脑端随后；需要安全邮箱或验证码时在“实时日志”提交。
+    - `POST /accounts/:index/login` 的 `platform` 支持 `mobile`、`desktop`、`both`（默认），仅使用该账号既有配置。无效平台返回 400，已有任务运行返回 409。
+    - 复用已有会话，保存前两端都必须核实上游余额与搜索额度，每端立即保存。失败不保存未验证会话，失败清理不覆盖旧会话。
+    - 仅登录跳过活动上下文初始化、积分任务、App 活动令牌、每日/静默时间跳过规则及任务通知，成功或失败均退出并释放运行锁。
+    - `ProcessManager` 在首条日志前设置 `mode: "login"`。`/history` 保留维护记录，`/points/history` 和账号战绩排除维护记录；账号增删改仍受账号写权限开关控制，登录使用运行控制权限。
 
 ---
 
@@ -126,10 +140,15 @@ npm run build
 # 2. 验证 WebUI 日志正则解析器（全绿通过）
 npm run test:log-parser
 
-# 3. 校验代码格式规范
+# 3. 核心/API/WebUI 回归与相关模块验证
+npm test
+npm run test:performance
+npm run test:preview
+
+# 4. 校验代码格式规范
 npm run format:check
 
-# 4. 启动单次前台调试
+# 5. 启动单次前台调试（会执行配置中的任务）
 npm run dev
 ```
 
@@ -141,8 +160,10 @@ npm run dev
 
 #### 2. 优化登录异常处理：
 
-> “请在 `src/browser/auth/Login.ts` 中针对微软出现的某种新型验证码/拦截页增加一种识别状态，确保处理完毕后通过状态机回退，严禁抛出致命未捕获错误导致进程退出。”
+> “请在 `src/browser/auth/Login.ts` 中识别新的验证码或拦截页，保持上游余额与额度验证。仅登录失败应清晰报错、保留旧会话并退出释放运行锁，成功后按平台立即保存。”
 
 #### 3. 调整 WebUI 数据展示：
 
 > “我想在 WebUI 中展示账户当前的连续签到天数，请检查 `scripts/api/logParser.js` 中的正则匹配与 `src/index.ts` 中的日志输出，确保中英文格式均能正确被解析。”
+
+行为变更应同时维护 [更新日志](CHANGELOG.md)、[用户指南](README.md)、[API 文档](scripts/api/README.md) 和 [交接指南](AI-HANDOFF.md)。验证范围与发布条件见 [开发指南](DEVELOPMENT.md) 和 [验收指南](CODEX_INSPECTION_GUIDE.md)；原始账号日志和会话保存在私有记录中。

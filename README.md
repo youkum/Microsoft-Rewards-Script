@@ -12,19 +12,19 @@
 [更新日志](./CHANGELOG.md) · [构建与部署验收](./CODEX_INSPECTION_GUIDE.md)
 [![Upstream](https://img.shields.io/badge/上游-TheNetsky/Microsoft--Rewards--Script-informational.svg)](https://github.com/TheNetsky/Microsoft-Rewards-Script)
 
-**基于 TypeScript · Patchright(Playwright) · 6重高可用积分降级 · 现代化智能登录 · WebUI 控制面板**
+**基于 TypeScript · Patchright(Playwright) · 区域积分读取与可信度校验 · 独立登录保存 · WebUI 控制面板**
 
-针对国内用户深度本地化：✅ 中国热搜查询源（百度/头条/抖音/微博/知乎） · ✅ 6级积分高可用探测 · ✅ 微软安全拦截页自动跳过 · ✅ 日志中文化 · ✅ PushPlus / 微信 ClawBot 推送 · ✅ 专属 WebUI 仪表盘 (:8890) · ✅ 针对 AI/Vibe-Coding 全套指令集
+针对国内用户深度本地化：✅ 中国热搜查询源（百度/头条/抖音/微博/知乎） · ✅ 区域 Flyout 与余额核实 · ✅ 单账号保存登录会话 · ✅ 微软安全拦截页自动跳过 · ✅ 日志中文化 · ✅ PushPlus / 微信 ClawBot 推送 · ✅ 内嵌 WebUI (:8890) · ✅ AI/Vibe-Coding 指导文档
 
 </div>
 
 > [!IMPORTANT]
-> **`V4-china` 是默认开发分支，不代表正式发布。** 当前更新包含内嵌 WebUI、单账号/排除账号调度及 PushPlus 预测。部署前请核对对应提交的 [CI](https://github.com/youkum/Microsoft-Rewards-Script/actions/workflows/validate.yml)；正式版本以 [GitHub Releases](https://github.com/youkum/Microsoft-Rewards-Script/releases) 为准。
-> 详细更新说明见 [最新版本更新说明](RELEASE_NOTES_20261117.md)，版本升级或迁移请参考 [升级与回滚指南](UPGRADE_GUIDE.md)。
+> **`V4-china` 是默认开发分支，不代表正式发布。** 当前更新包含区域积分接口修复、单账号保存登录会话、内嵌 WebUI 与 PushPlus 预测。部署前请核对对应提交的 [CI](https://github.com/youkum/Microsoft-Rewards-Script/actions/workflows/validate.yml)；正式版本以 [GitHub Releases](https://github.com/youkum/Microsoft-Rewards-Script/releases) 为准。
+> 详细说明见 [2026-11-19 更新说明](RELEASE_NOTES_20261119.md)，版本升级或迁移请参考 [升级与回滚指南](UPGRADE_GUIDE.md)。
 
 > [!NOTE]
 > 🤖 **项目维护与开发声明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
-> 无论是六重积分容灾降级架构、现代登录流程与干扰页跳过、WebUI 内嵌实时双语日志协同，还是 Docker 与工程化配置，均在开发者提示词引导下由 AI 独立完成全链路分析、编码、测试与部署。
+> 区域积分读取、登录流程与干扰页处理、WebUI 实时日志及 Docker 配置由 AI 在开发者指导下维护，验证范围与未验证项记录在更新说明和验收文档中。
 
 > ℹ️ **分支与项目说明**
 >
@@ -42,14 +42,14 @@
 - [✨ 核心特性](#-核心特性)
 - [🚀 快速开始](#-快速开始)
 - [📦 Windows 部署](#-windows-部署)
-- [🐳 Docker 部署](#-docker-部署)
-- [🖥️ 控制 API 与面板](#️-控制-api-与面板)
+- [🐳 Linux / Docker 部署](#-linux--docker-部署生产推荐)
+- [🖥️ 控制 API 与内嵌面板](#️-控制-api-与内嵌面板)
 - [⚙️ 配置参考](#️-配置参考)
 - [🔔 通知渠道](#-通知渠道)
 - [❓ 常见问题](#-常见问题)
-- [⚠️ 注意事项](#-注意事项)
+- [⚠️ 注意事项](#️-注意事项)
 - [📜 开源引用与致谢](#-开源引用与致谢)
-- [⚠️ 免责声明](#-免责声明)
+- [⚠️ 免责声明](#️-免责声明)
 
 ---
 
@@ -57,6 +57,10 @@
 
 > 完整历史记录见 📄 [CHANGELOG.md](./CHANGELOG.md)。
 
+- **2026-11-19**：
+    - **保存登录会话**：账号管理可独立登录一个账号，默认手机端、电脑端依次核实并立即保存，无需执行完整积分任务；维护不计收益，结束后释放任务占用。
+    - **区域接口与收益核实**：优先区域 Flyout，浏览器备用请求共享 Cookie；未核实额度不算完成，未知余额不结算成功收益，每账号重置状态。
+    - **日志与文档同步**：修复 DEBUG/INFO 及阅读/搜索汇总重复累计；用户、API、升级、开发和 AI 指南同步当前行为，详见 [更新说明](RELEASE_NOTES_20261119.md)。
 - **2026-11-18**：
     - **WebUI 现代化与性能跃升**：前端全面重构为原生 ES Modules（无需额外构建），合并 SSE 状态与积分刷新，大幅降低面板轮询开销。
     - **PushPlus 逐账号收益与兑换预测**：新增 `rewardGoal` 配置，支持自动汇总各账号每日实际收益，并基于历史均值预测达成兑换目标所需天数。
@@ -82,9 +86,11 @@
 
 **增强版亮点（最新优化）**
 
-- 🌟 **全量积分画像 & 6 级高可用降级体系**：
+- 🌟 **积分画像与数据可信度**：
     - 支持抓取完整账户积分视图：可用余额、历史总计、今日已得、PC/移动/Edge各子项剩余配额、等级、升级进度、连击天数与保护。
-    - 实现 6 级自动容灾降级（官方主 API ➔ Flyout 接口 ➔ 真实上下文内生 Fetch ➔ DOM 文本抓取 ➔ React Flight 状态 ➔ 保底安全对象），降低页面改动导致的异常。
+    - Dashboard 依次请求区域 Flyout HTTP、共享 Cookie 的浏览器 `page.request`、旧 Rewards API，最后返回标记为未核实的兼容结构。DOM/React 余额探测独立处理；缺失额度不算完成，未知起止余额不结算成功收益。
+- 🌟 **单账号保存登录会话**：
+    - 账号管理独立完成手机/电脑认证，核实上游余额及搜索额度后每端立即保存；验证码在实时日志页提交，不运行积分任务或任务通知，不计收益和账号战绩。
 - 🌟 **自适应认证与无感跳过拦截页**：
     - 自动识别并跳过“体验无密码”、“保护你的账户”、“添加备用安全信息”等阶段性弹窗阻碍。
     - 智能过滤 Cookie 条款与协议弹窗，支持回车键底层键盘提交兜底。
@@ -300,18 +306,18 @@ docker compose restart          # 快捷重启
 
 2. 启动后在宿主机访问 `http://127.0.0.1:8890`。远程优先使用 [SSH 隧道](UPGRADE_GUIDE.md#43-认证端口和-compose-override)；确需局域网直连时，显式设置 `API_BIND_ADDRESS` 为服务器的受信任网卡地址，并以防火墙限制来源，不要将 `8890` 暴露到公网。登录后可以：
 
-    | 页面          | 能力                                                                                                                            |
-    | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-    | 📊 总览       | 运行状态、启停/重启、**单账号运行（只跑此号）**、各账号实时积分（SSE 推送）                                                     |
-    | 👤 账号管理   | **网页端增/删/改账号**（写入 `config/accounts.env`，下次运行生效）、每账号独立代理配置、**代理连通性测试**（出口 IP/国家/延迟） |
-    | 🔔 通知与预测 | **PushPlus 微信通知**配置、**`rewardGoal` 兑换目标**积分设置、逐账号积分收益与达成天数智能预测预览                              |
-    | 💰 积分历史   | **持久化积分报表**（重启不丢）：每日获得柱状图、分账号累计、运行记录明细                                                        |
-    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动、**控制台交互式输入条**（支持验证码/辅助邮箱实时交互）                                       |
-    | ⏰ 运行调度   | Cron 编辑、启用开关、排除账号（失败自动安全回滚）                                                                               |
-    | ⚙️ 行为配置   | 任务开关表单 + 原始 config.json 编辑（受 `API_ALLOW_CONFIG_WRITE` 控制）                                                        |
-    | 🧰 会话与诊断 | 登录会话管理（删除需重新登录）、错误诊断截图/快照查看                                                                           |
+    | 页面          | 能力                                                                                                                           |
+    | ------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+    | 📊 总览       | 运行状态、启停/重启、**单账号运行（只跑此号）**、各账号实时积分（SSE 推送）                                                    |
+    | 👤 账号管理   | **网页端增/删/改账号**（写入 `config/accounts.env`，下次运行生效）、独立代理与测速、**保存登录会话**（单账号仅登录，默认两端） |
+    | 🔔 通知与预测 | **PushPlus 微信通知**配置、**`rewardGoal` 兑换目标**积分设置、逐账号积分收益与达成天数智能预测预览                             |
+    | 💰 积分历史   | **持久化积分报表**（重启不丢）：每日获得柱状图、分账号累计、运行记录明细                                                       |
+    | 📜 实时日志   | SSE 实时日志流、级别过滤、自动滚动、**控制台交互式输入条**（支持验证码/辅助邮箱实时交互）                                      |
+    | ⏰ 运行调度   | Cron 编辑、启用开关、排除账号（失败自动安全回滚）                                                                              |
+    | ⚙️ 行为配置   | 任务开关表单 + 原始 config.json 编辑（受 `API_ALLOW_CONFIG_WRITE` 控制）                                                       |
+    | 🧰 会话与诊断 | 登录会话管理（删除需重新登录）、错误诊断截图/快照查看                                                                          |
 
-> 说明：网页端新增的账号保存在 `config/accounts.env`（该目录已挂载持久化），与 `.env` 中手工配置的账号**合并生效**（`accounts.env` 中同槽位优先），且在 Web 端均支持直接查看与编辑。旧的外部仪表盘 [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) 仍可按原方式配合 `API_TOKEN` 使用，两者互不影响。
+> 说明：网页账号写入 `config/accounts.env`（已挂载持久化），与 `.env` 按槽位合并，Web 配置同槽位优先。尚未被 Web 配置覆盖的 `.env` 账号在面板中只读，需在基础文件修改；两种来源均可使用“保存登录会话”。旧的外部仪表盘 [mgrimace/rewards-dashboard](https://github.com/mgrimace/rewards-dashboard) 可按 [API 文档](scripts/api/README.md) 验证对接。
 
 </details>
 
@@ -321,10 +327,10 @@ docker compose restart          # 快捷重启
 
 `API_MODE=true` 时( compose.yaml 已默认开启),脚本自带**内嵌 WebUI 控制面板**与控制 API(同一端口,Docker 下 8890):
 
-- 浏览器打开 `http://<ip>:8890` 即可进行全部操作:账号增删改、代理配置与测试、启停/调度/配置、实时日志、积分历史
+- 宿主机打开 `http://127.0.0.1:8890`，远程使用 [SSH 隧道](UPGRADE_GUIDE.md#43-认证端口和-compose-override)；面板支持账号管理、保存登录会话、代理测试、启停/调度/配置、实时日志与积分历史
 - 面板登录使用 `.env` 中的 `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD`(会话 Cookie,HttpOnly + HMAC 签名)
 - 外部工具可用 `API_TOKEN` 走 `Authorization: Bearer` / `X-API-Key` 调用同一套 API
-- 新增 API:账号 CRUD(`POST/PATCH/DELETE /accounts`)、代理测试(`POST /accounts/:index/proxy-test`)、持久化积分历史(`GET /points/history`)
+- API 支持账号 CRUD、代理测试(`POST /accounts/:index/proxy-test`)、保存登录会话(`POST /accounts/:index/login`)与持久化积分历史(`GET /points/history`，排除仅登录维护)
 - Windows 本地运行:`npm run api` 后访问 `http://127.0.0.1:3010`
 - 完整文档见 [`scripts/api/README.md`](scripts/api/README.md)
 
@@ -586,6 +592,8 @@ npx patchright install chromium
 可在控制面板「账号管理」点击对应账号的 **保存登录会话**，依次完成手机端和电脑端认证；验证码或安全邮箱通过「实时日志」页面输入。该操作仅登录并保存会话，结束后自动退出，不执行积分任务、不发送任务通知，也不计入积分历史或账号战绩。已有会话会先尝试复用，登录失败不会在关闭浏览器时覆盖旧会话。
 
 保存前会通过账号所在地区的 Bing 接口核实登录状态、余额和搜索额度；验证失败会提示错误，不把未验证会话当作成功保存。删除会话后可重复上述操作，无需跑完每日任务、阅读和搜索。控制 API 也支持 `POST /accounts/:index/login`，请求体的 `platform` 可选 `mobile`、`desktop` 或 `both`（默认）。已有任务运行时返回 409，请先停止该任务。登录后的 cookie 会保存到 `sessions/` 目录，后续运行自动复用。
+
+若账号管理未显示按钮，核对部署是否包含本次更新，重建镜像后强制刷新面板。**只跑此号** 会执行配置中的积分任务；保存会话请使用 **保存登录会话**。逐平台保存结果和进程退出需分别确认，详见 [升级验收步骤](UPGRADE_GUIDE.md#步骤-d验证控制台与账号)。
 
 ⚠️ `sessions/` 目录**需要多备份**，丢了就要重新登录。
 
