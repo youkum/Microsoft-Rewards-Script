@@ -1,6 +1,6 @@
 # AI-HANDOFF · 当前实现交接与审查指南
 
-本文面向接手或审查本仓库的工程师与 AI 编程代理，无需原始对话上下文。以 2026-11-19 积分接口与独立登录修复后的代码为基准；早期 WebUI 改造记录见 Git 历史及 [更新日志](CHANGELOG.md)。仓库为 [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) 的 `V4-china` 分支，许可为 GPL-3.0-or-later，派生关系见 [第三方声明](THIRD-PARTY-NOTICES.md)。
+本文面向接手或审查本仓库的工程师与 AI 编程代理，无需原始对话上下文。包括 2026-11-19 积分接口/独立登录与 2026-11-21 设置/累计统计持久化修复；早期 WebUI 改造记录见 Git 历史及 [更新日志](CHANGELOG.md)。仓库为 [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) 的 `V4-china` 分支，许可为 GPL-3.0-or-later，派生关系见 [第三方声明](THIRD-PARTY-NOTICES.md)。
 
 ## 1. 当前范围与入口
 
@@ -64,7 +64,9 @@ CN 使用 `cn.bing.com`，其他地区使用 `www.bing.com`。请求 Cookie 按�
 
 保持 `FLOW`、`ACCOUNT-START`、`RUN-END`、`POINTS-ALL` 等解析标记。改日志时同步 `logParser.js` 与测试。DEBUG 活动响应只作诊断；INFO 增量与阅读/搜索累计汇总按同账号、平台、来源补足差额，不能双计。
 
-API 管理的积分任务结束后追加 `config/points-history.jsonl`，约 5 MB 轮转；直接 `npm start` 不负责该持久历史。`/history` 为有数量上限的内存记录，API 重启后丢失；积分历史不会丢失。未知余额及不足样本不能产生确定的兑换预测。
+API 管理的运行结束后，`runHistory.js` 原子保存 `config/run-history.json`：最近记录有数量上限，账号累计统计独立保存；`/history` 跨重启恢复且 `inMemoryOnly: false`，`/accounts` 标记 `statsScope: "lifetime"`。首次从现存积分 JSONL 及 `.1` 导入任务记录，使用时间水位和同时间运行标识去重；后续报表轮转不清零累计。`.bak` 支持恢复，双方损坏时拒绝无声重置。仅登录进入最近运行记录，排除累计收益和账号统计。
+
+积分任务另外追加 `config/points-history.jsonl`，约 5 MB 轮转；直接 `npm start` 不负责 API 持久历史。实时日志及未结束任务仍为内存状态。配置写入共用 `scripts/atomicFile.cjs`，必须解析符号链接真实目标后替换；新 Dockerfile 需携带该模块。旧容器重建前保留根目录活动配置与挂载目录，避免遗漏旧版本写入容器层的最新设置，见升级指南。未知余额及不足样本不能产生确定的兑换预测。
 
 前端用文本节点构建内容，保持静态资源白名单、配置脱敏、凭据保留/清除语义、SSE 合并与刷新取消。保存通知设置和摘要预览不发送消息；真实通知送达需要独立验证。
 

@@ -133,7 +133,7 @@ async function fixture(t, { env = {}, accounts = {}, webAccounts = '' } = {}) {
     )
     await fs.copyFile(path.join(apiDir, '..', 'env.js'), path.join(root, 'scripts', 'env.js'))
     await fs.copyFile(path.join(apiDir, '..', 'credentialEnv.cjs'), path.join(root, 'scripts', 'credentialEnv.cjs'))
-    for (const file of ['rewardForecast.cjs', 'forecastHistory.cjs']) {
+    for (const file of ['rewardForecast.cjs', 'forecastHistory.cjs', 'atomicFile.cjs']) {
         await fs.copyFile(path.join(apiDir, '..', file), path.join(root, 'scripts', file))
     }
     await fs.mkdir(path.join(root, 'config'))
@@ -162,40 +162,43 @@ async function fixture(t, { env = {}, accounts = {}, webAccounts = '' } = {}) {
     await assert.rejects(fs.access(path.join(root, '.env')), { code: 'ENOENT' })
     await assert.rejects(fs.access(path.join(root, 'sessions')), { code: 'ENOENT' })
 
-    port = await freeLoopbackPort()
-    child = spawn(process.execPath, [path.join(copiedApi, 'server.js'), '--port', String(port)], {
-        cwd: root,
-        env: { ...isolatedEnv(root), ...accounts, ...env },
-        stdio: ['ignore', 'pipe', 'pipe'],
-        windowsHide: true
-    })
-    child.on('error', err => {
-        spawnError = err
-    })
-    closed = new Promise(resolve => child.once('close', resolve))
-    for (const stream of [child.stdout, child.stderr]) {
-        stream.setEncoding('utf8')
-        stream.on('data', chunk => {
-            output = (output + chunk).slice(-100_000)
+    async function launch() {
+        port = await freeLoopbackPort()
+        child = spawn(process.execPath, [path.join(copiedApi, 'server.js'), '--port', String(port)], {
+            cwd: root,
+            env: { ...isolatedEnv(root), ...accounts, ...env },
+            stdio: ['ignore', 'pipe', 'pipe'],
+            windowsHide: true
         })
+        child.on('error', err => {
+            spawnError = err
+        })
+        closed = new Promise(resolve => child.once('close', resolve))
+        for (const stream of [child.stdout, child.stderr]) {
+            stream.setEncoding('utf8')
+            stream.on('data', chunk => {
+                output = (output + chunk).slice(-100_000)
+            })
+        }
+        await until(
+            () => {
+                if (spawnError) throw spawnError
+                if (child.exitCode !== null || child.signalCode !== null)
+                    throw new Error(`API exited during startup:\n${output}`)
+                const line = output.split(/\r?\n/).find(value => value.startsWith('__API_READY__ '))
+                if (!line) return false
+                try {
+                    return JSON.parse(line.slice('__API_READY__ '.length))
+                } catch {
+                    return false
+                }
+            },
+            'API readiness',
+            10_000
+        )
+        ready = true
     }
-    await until(
-        () => {
-            if (spawnError) throw spawnError
-            if (child.exitCode !== null || child.signalCode !== null)
-                throw new Error(`API exited during startup:\n${output}`)
-            const line = output.split(/\r?\n/).find(value => value.startsWith('__API_READY__ '))
-            if (!line) return false
-            try {
-                return JSON.parse(line.slice('__API_READY__ '.length))
-            } catch {
-                return false
-            }
-        },
-        'API readiness',
-        10_000
-    )
-    ready = true
+    await launch()
 
     // node:http avoids fetch's pooled keep-alive sockets; every request has a
     // deadline, and SSE resolves on its first frame then destroys both streams.
@@ -254,7 +257,16 @@ async function fixture(t, { env = {}, accounts = {}, webAccounts = '' } = {}) {
         assert.match(response.headers['content-type'], /^application\/json; charset=utf-8$/)
         return JSON.parse(response.text)
     }
-    return { root, request, json, config }
+    async function restart(beforeStart = async () => {}) {
+        await json('/shutdown', { method: 'POST', headers: tokenHeaders, body: { force: true } }, 202)
+        assert.ok(await waitForClose(3000), `API did not stop for restart:\n${output}`)
+        await beforeStart()
+        ready = false
+        output = ''
+        spawnError = undefined
+        await launch()
+    }
+    return { root, request, json, config, restart }
 }
 
 async function until(check, description, timeout = 5000) {
@@ -266,6 +278,82 @@ async function until(check, description, timeout = 5000) {
     } while (Date.now() < deadline)
     assert.fail(`Timed out waiting for ${description}`)
 }
+
+test(
+    'config settings, capped run history and lifetime account earnings survive repeated API/container-style restarts',
+    testOptions,
+    async t => {
+        const api = await fixture(t, {
+            env: { API_ALLOW_CONFIG_WRITE: 'true', API_RUN_HISTORY: '2' },
+            accounts: { ACCOUNT_1_EMAIL: 'account@example.invalid', ACCOUNT_1_PASSWORD: 'synthetic-password' }
+        })
+        const link = path.join(api.root, 'config.json')
+        const mounted = path.join(api.root, 'config', 'config.json')
+        await fs.copyFile(link, mounted)
+        await fs.unlink(link)
+        await fs.symlink(mounted, link)
+        await api.json('/config', {
+            method: 'PATCH',
+            headers: tokenHeaders,
+            body: {
+                workers: { desktop: true },
+                webhook: { serverchan: { enabled: true, token: 'synthetic-notification-token' } }
+            }
+        })
+        const settings = await fs.readFile(mounted, 'utf8')
+        assert.ok((await fs.lstat(link)).isSymbolicLink())
+        await mockRun(
+            api,
+            [
+                logLine(
+                    'account',
+                    'ACCOUNT-END',
+                    'Account completed: account@example.invalid | pointsGained=5 | originalBalance=1000 | currentBalance=1005 | durationSeconds=1'
+                )
+            ],
+            1
+        )
+        await mockRun(
+            api,
+            [
+                logLine(
+                    'account',
+                    'ACCOUNT-END',
+                    'Account completed: account@example.invalid | pointsGained=7 | originalBalance=1005 | currentBalance=1012 | durationSeconds=1'
+                )
+            ],
+            2
+        )
+        await api.json(
+            '/accounts/1/login',
+            { method: 'POST', headers: tokenHeaders, body: { platform: 'desktop' } },
+            202
+        )
+        await until(
+            async () => (await api.json('/status', { headers: tokenHeaders })).state === 'idle',
+            'login maintenance completion'
+        )
+        const history = await api.json('/history', { headers: tokenHeaders })
+        assert.equal(history.inMemoryOnly, false)
+        assert.equal(history.count, 2)
+        assert.equal(history.runs[0].mode, 'login')
+        const before = await api.json('/accounts', { headers: tokenHeaders })
+        assert.equal(before.statsScope, 'lifetime')
+        assert.equal(before.accounts[0].runs, 2)
+        assert.equal(before.accounts[0].totalCollected, 12)
+        assert.equal(before.accounts[0].successStreak, 2)
+        for (let cycle = 0; cycle < 2; cycle++) {
+            await api.restart(async () => {
+                await fs.unlink(link)
+                await fs.symlink(mounted, link)
+            })
+            assert.equal(await fs.readFile(link, 'utf8'), settings)
+            assert.deepEqual(await api.json('/history', { headers: tokenHeaders }), history)
+            assert.deepEqual(await api.json('/accounts', { headers: tokenHeaders }), before)
+            assert.equal((await api.json('/points/history', { headers: tokenHeaders })).totals.collected, 12)
+        }
+    }
+)
 
 test(
     'public health, auth discovery, preflight, and static ES modules work without credentials',

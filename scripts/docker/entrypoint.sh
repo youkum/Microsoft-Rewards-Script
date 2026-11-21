@@ -46,6 +46,7 @@ if [ -d "$CONFIG_FILE" ]; then
   exit 1
 fi
 
+node "$SCRIPT_DIR/scripts/api/migrateConfig.js"
 SYNC_ARGS=(--config "$CONFIG_FILE" --example "$CONFIG_EXAMPLE")
 if [ "${CONFIG_AUTO_SYNC:-false}" = "true" ]; then
   SYNC_ARGS+=(--patch)

@@ -11,7 +11,7 @@ The API can:
 - authenticate and save sessions for one account without running Rewards tasks;
 - expose live process status and point totals;
 - stream structured logs over Server-Sent Events (SSE);
-- return recent errors, in-memory run history, configured account summaries,
+- return recent errors, persistent recent run history, configured account summaries,
   and diagnostic captures;
 - list stored session metadata and delete the mobile/desktop sessions belonging
   to one account;
@@ -123,16 +123,16 @@ restarts:
 
 - buffered logs;
 - live run state;
-- parsed errors;
-- completed runs returned by `/history`;
-- account statistics calculated from that history.
+- parsed errors.
 
 The API stores durable task history as JSONL and reuses the bot's session database.
 Standalone config and schedule writes are disabled by default and require separate
 opt-in environment variables; the supplied Compose configuration enables both:
 
-- `PUT` or `PATCH /config` updates `config.json`. The previous file is copied to
-  `config.json.bak` on a best-effort basis before replacement.
+- `PUT` or `PATCH /config` updates the real target of `config.json`, preserving
+  its Docker symlink to `config/config.json`. The previous target is copied to
+  `<real-target>.bak` on a best-effort basis before atomic replacement. On POSIX,
+  new files and backups use mode `0600`; Windows access depends on NTFS ACLs.
 - `PUT` or `PATCH /schedule` writes `config/schedule.json` atomically and applies
   the cron change immediately. The file lives in the existing Docker `./config`
   volume, so it survives container restarts and takes precedence over
@@ -141,8 +141,15 @@ opt-in environment variables; the supplied Compose configuration enables both:
   bot's existing `sessions.db`. The API never exposes stored cookies or
   fingerprint contents and has no delete-all session route.
 
-Live logs, parsed state, `/history`, and account overview statistics remain
-memory-only. Completed Rewards-task runs are also written to
+`config/run-history.json` durably stores bounded recent records (including login
+maintenance) and separate lifetime account statistics. On first startup, all valid
+available `points-history.jsonl` / `.1` task records are imported and deduplicated,
+without the HTTP date/record limits. Later report rotation and `API_RUN_HISTORY`
+limits do not reduce these cumulative account values. A `.bak` snapshot supports
+recovery; if both snapshots are corrupt, startup fails instead of resetting totals.
+Files must be retained in the mounted `config/` directory. Only ended API-managed
+runs are recorded; abrupt shutdown can lose unfinished run state and buffered logs.
+Completed Rewards-task runs are also written to
 `config/points-history.jsonl` for durable `/points/history` queries; login
 maintenance is excluded from that file and from account earnings statistics.
 
@@ -828,7 +835,7 @@ console.log(data)
 
 ### `GET /history`
 
-Returns completed runs launched by the current API process, newest first,
+Returns persisted recent completed runs across API restarts, newest first,
 including login maintenance with `mode: "login"` (ordinary runs use `"tasks"`).
 
 Query parameter:
@@ -897,7 +904,7 @@ console.log(data.runs)
         }
     ],
     "count": 1,
-    "inMemoryOnly": true
+    "inMemoryOnly": false
 }
 ```
 
@@ -977,9 +984,11 @@ Valid account locale values are normalized in this response: language uses canon
 }
 ```
 
-The `runs`, `totalCollected`, `successStreak`, and `last*` fields are calculated
-from this API process's in-memory task history, excluding login maintenance,
-and therefore reset after an API restart.
+The `runs`, `totalCollected`, `successStreak`, and `last*` fields are persisted in
+`config/run-history.json`, excluding login maintenance. The response includes
+`statsScope: "lifetime"`: totals cover all task records imported at upgrade plus
+subsequent completed API-managed tasks, independent of the recent-history limit
+and rotating points-report window. Already deleted historical data cannot be recovered.
 
 ## Embedded WebUI and account management
 
@@ -2113,7 +2122,7 @@ All variables are optional.
 | `API_TOKEN`                | unset                         | Shared token required by every endpoint when configured.                                    |
 | `API_CORS_ORIGIN`          | `*`                           | Value returned in `Access-Control-Allow-Origin`.                                            |
 | `API_LOG_BUFFER`           | `2000`                        | Maximum structured log entries kept in memory.                                              |
-| `API_RUN_HISTORY`          | `20`                          | Maximum completed runs kept in memory.                                                      |
+| `API_RUN_HISTORY`          | `20`                          | Maximum recent runs persisted; does not cap lifetime account statistics.                    |
 | `API_STOP_TIMEOUT_MS`      | `15000`                       | Graceful-stop window before forced termination.                                             |
 | `API_RUN_COMMAND`          | auto                          | Override the executable used to launch the bot.                                             |
 | `API_RUN_ARGS`             | none                          | Default arguments for `API_RUN_COMMAND`; accepts whitespace-separated text or a JSON array. |

@@ -1,5 +1,10 @@
 import fs from 'fs'
 import path from 'path'
+import { createRequire } from 'node:module'
+
+const { writeJsonAtomic } = createRequire(__filename)('../../scripts/atomicFile.cjs') as {
+    writeJsonAtomic: (target: string, cfg: unknown, opts: { backup?: boolean }) => { backupPath?: string }
+}
 
 export interface SyncReport {
     configPath: string
@@ -47,20 +52,7 @@ export function writeConfigAtomic(
     cfg: unknown,
     opts: { backup?: boolean } = {}
 ): { backupPath?: string } {
-    const backup = opts.backup ?? true
-    let backupPath: string | undefined
-    if (backup && fs.existsSync(targetPath)) {
-        backupPath = `${targetPath}.bak`
-        try {
-            fs.copyFileSync(targetPath, backupPath)
-        } catch {
-            backupPath = undefined // best-effort backup; don't fail the sync over it
-        }
-    }
-    const tmp = `${targetPath}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2) + '\n')
-    fs.renameSync(tmp, targetPath)
-    return { backupPath }
+    return writeJsonAtomic(targetPath, cfg, opts)
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {

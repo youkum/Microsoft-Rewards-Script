@@ -5,7 +5,8 @@ import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 import { ProcessManager } from './processManager.js'
-import { buildExcludedAccountsEnv, buildSingleAccountEnv, loadAccounts, mergeAccountStats } from './accounts.js'
+import { buildExcludedAccountsEnv, buildSingleAccountEnv, loadAccounts } from './accounts.js'
+import { RunHistoryStore } from './runHistory.js'
 import {
     validateConfig,
     deepMerge,
@@ -266,6 +267,12 @@ const pm = new ProcessManager({
     version: pkgVersion
 })
 
+const runHistory = new RunHistoryStore(projectRoot, {
+    limit: RUN_HISTORY,
+    warn: message => log('WARN', message)
+})
+if (runHistory.recoveredRuns) log('INFO', `Recovered ${runHistory.recoveredRuns} task runs from points history.`)
+
 const startedAt = Date.now()
 
 function containsControlCharacters(value) {
@@ -286,11 +293,19 @@ pm.on('log', entry => {
     else process.stdout.write(line)
 })
 
-// Persist every finished run to config/points-history.jsonl (WebUI 积分历史).
+// Save maintenance/task records and lifetime account statistics before the
+// separate rotating points report. An unavailable store must produce a warning.
 pm.on('exit', () => {
+    const entry = pm.getHistory()[0]
+    if (!entry) return
+    const record = toHistoryRecord(entry)
     try {
-        const run = pm.getHistory()[0]
-        if (run && run.run?.mode !== 'login') appendRunRecord(projectRoot, toHistoryRecord(run))
+        runHistory.append(record)
+    } catch (err) {
+        log('ERROR', 'Could not persist run history/account totals:', err instanceof Error ? err.message : err)
+    }
+    try {
+        if (record.mode !== 'login') appendRunRecord(projectRoot, record)
     } catch (err) {
         log('WARN', 'Could not append points history:', err instanceof Error ? err.message : err)
     }
@@ -672,20 +687,17 @@ const requestHandler = async (req, res) => {
         // history
         if (method === 'GET' && pathname === '/history') {
             const limit = clampInt(url.searchParams.get('limit'), 1, RUN_HISTORY, RUN_HISTORY)
-            const runs = pm.getHistory().slice(0, limit).map(toHistoryRecord)
-            return sendJson(res, 200, { runs, count: runs.length, inMemoryOnly: true })
+            const runs = runHistory.getHistory().slice(0, limit)
+            return sendJson(res, 200, { runs, count: runs.length, inMemoryOnly: false })
         }
 
         // account overview
         if (method === 'GET' && pathname === '/accounts') {
-            const history = pm
-                .getHistory()
-                .filter(entry => entry.run?.mode !== 'login')
-                .map(toHistoryRecord)
-            const accounts = mergeAccountStats(accountsView(), history)
+            const accounts = runHistory.getAccounts(accountsView())
             return sendJson(res, 200, {
                 accounts,
                 count: accounts.length,
+                statsScope: 'lifetime',
                 accountsEnvPath: path.join(projectRoot, 'config', 'accounts.env')
             })
         }
@@ -1299,7 +1311,7 @@ server.listen(PORT, HOST, () => {
     )
     log(
         'INFO',
-        `Runtime state: points history persisted | config writes: ${ALLOW_CONFIG_WRITE ? 'on' : 'off'} | schedule writes: ${ALLOW_SCHEDULE_WRITE ? 'on' : 'off'} | account writes: ${ALLOW_ACCOUNT_WRITE ? 'on' : 'off'} | session deletion: account-scoped`
+        `Runtime state: run history/account totals/points history persisted | config writes: ${ALLOW_CONFIG_WRITE ? 'on' : 'off'} | schedule writes: ${ALLOW_SCHEDULE_WRITE ? 'on' : 'off'} | account writes: ${ALLOW_ACCOUNT_WRITE ? 'on' : 'off'} | session deletion: account-scoped`
     )
     if (!TOKEN && !DASHBOARD_PASSWORD) {
         const loopback = HOST === '127.0.0.1' || HOST === 'localhost' || HOST === '::1'

@@ -1,7 +1,6 @@
 // Persistent run/points history for the WebUI points page.
 //
-// The in-memory run history in ProcessManager is capped (default 20 runs) and
-// lost on restart, so every finished run is appended as one JSON line to
+// Every finished task run is appended as one JSON line to
 // config/points-history.jsonl (the config/ directory is volume-mounted in
 // Docker, so history survives rebuilds). The file is rotated at ~5 MB to keep
 // reads bounded.
@@ -50,6 +49,12 @@ function readRecords(filePath) {
     return records
 }
 
+// Unfiltered legacy records for one-time migration/recovery of lifetime stats.
+export function readAllPointsRecords(projectRoot) {
+    const file = pointsHistoryFilePath(projectRoot)
+    return [...readRecords(`${file}.1`), ...readRecords(file)].filter(record => record.mode !== 'login')
+}
+
 function toLocalDateStr(when) {
     if (!when) return 'unknown'
     const d = new Date(when)
@@ -74,7 +79,7 @@ export function readPointsHistory(projectRoot, { days = 30, limit = 200 } = {}) 
     const filePath = pointsHistoryFilePath(projectRoot)
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000
 
-    const records = [...readRecords(`${filePath}.1`), ...readRecords(filePath)]
+    const records = readAllPointsRecords(projectRoot)
         .filter(record => {
             const when = Date.parse(record.endedAt || record.startedAt || '')
             return Number.isFinite(when) ? when >= cutoff : true

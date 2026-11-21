@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { assertNoRedactionPlaceholders } from './lib.js'
+import { writeJsonAtomic } from '../atomicFile.cjs'
 
 function resolveConfigPath(projectRoot) {
     const candidates = [
@@ -286,16 +287,6 @@ export function readConfig(projectRoot) {
 
 export function writeConfigAtomic(projectRoot, cfg) {
     assertNoRedactionPlaceholders(cfg)
-    const target = resolveConfigPath(projectRoot)
-    if (fs.existsSync(target)) {
-        try {
-            fs.copyFileSync(target, `${target}.bak`)
-        } catch {
-            // best-effort backup
-        }
-    }
-    const tmp = `${target}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2))
-    fs.renameSync(tmp, target)
+    const { target } = writeJsonAtomic(resolveConfigPath(projectRoot), cfg)
     return target
 }

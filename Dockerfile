@@ -86,7 +86,7 @@ COPY LICENSE THIRD-PARTY-NOTICES.md ./
 COPY --chmod=755 scripts/docker/run_daily.sh ./scripts/docker/run_daily.sh
 COPY --chmod=755 scripts/docker/healthcheck.sh ./scripts/docker/healthcheck.sh
 COPY --chmod=755 scripts/api/ ./scripts/api/
-COPY --chmod=644 scripts/env.js scripts/credentialEnv.cjs scripts/rewardForecast.cjs scripts/forecastHistory.cjs ./scripts/
+COPY --chmod=644 scripts/env.js scripts/credentialEnv.cjs scripts/rewardForecast.cjs scripts/forecastHistory.cjs scripts/atomicFile.cjs ./scripts/
 COPY --chmod=644 scripts/package.json ./scripts/package.json
 COPY --chmod=644 src/crontab.template /etc/cron.d/microsoft-rewards-cron.template
 COPY --chmod=755 scripts/docker/entrypoint.sh /usr/local/bin/entrypoint.sh
