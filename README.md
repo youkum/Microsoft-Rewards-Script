@@ -30,6 +30,7 @@
 >
 > - **本分支（`V4-china`）**：维护国内适配和内嵌控制台。本项目是社区维护的 fork，不隶属于 Microsoft 或 Rewards 官方。
 > - 本分支账号改用 `.env` 环境变量与 `config/accounts.env` 统一配置（不再使用旧版 `accounts.json`）。
+> - 2026-11-23 起统一保留 `V4-china` 作为维护分支。旧 `main` 的 v3 提交历史已整合至本分支，部署与更新请使用当前 v4 文件及本分支指南。
 
 > [!TIP]
 > 派生关系和依赖许可见 [第三方声明](THIRD-PARTY-NOTICES.md)。
