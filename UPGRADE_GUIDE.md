@@ -16,6 +16,8 @@
 
 ### 2026-11-25：代理测试与出口 IP
 
+登录修复会将未认证的 Rewards 介绍页重新导向区域认证入口，并明确记录浏览器网络错误。`chromewebdata`、`ERR_TUNNEL_CONNECTION_FAILED` 或认证资源请求失败时，检查代理到实际 Microsoft 登录域名的 HTTPS CONNECT。更换可用入口后再执行“保存登录会话”，保留旧会话目录。
+
 代理操作和本次验证范围见 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)。全新部署及网页重建使用 `V4-china` 源码，复用原 `config/` 和 `sessions/` 挂载目录以保留配置、统计和会话。
 
 重新构建当前源码镜像并刷新面板后，代理测试会捕获握手断开、认证失败及超时异常，并尝试备用出口 IP 服务。如果 IP 回显都失败但代理可访问 Bing HTTPS，提示“代理已连通，但出口 IP 查询失败”，返回 `IP_ECHO_UNAVAILABLE`；该结果只能确认 Bing 连通，未取得出口 IP。

@@ -48,6 +48,8 @@ CN 使用 `cn.bing.com`，其他地区使用 `www.bing.com`。请求 Cookie 按�
 
 维护调用 `login(page, account, true)`，手机端和电脑端都必须通过上游认证余额及搜索额度验证才能保存。每端立即保存并 checkpoint；失败不保存未核实会话，浏览器失败清理不覆盖旧会话。部分平台已成功保存、后续平台失败时，应如实显示结果。
 
+`detectCurrentState()` 在 Bing/Rewards 页面通过共享 Cookie 的区域 Flyout 判断认证。未核实的 `/about` 返回 `SIGN_IN_REQUIRED`，已有有效数据可复用；`chrome-error` 页有限重试区域认证入口。导航失败记录安全的目标与网络码，认证域名失败按域名/错误码去重，退出时移除监听器。不要把代理出口回显或 Bing 首页连通当作整个登录链路可用。
+
 仅登录跳过 Rewards 活动上下文初始化、奖励 workers、App 活动令牌、每日/静默时间跳过规则和任务通知。成功或失败均显式退出，释放面板运行锁。
 
 `ProcessManager` 在第一条日志前标记 `mode: "login"`，包括早期失败。`GET /history` 保留维护运行；`GET /points/history`、账号运行战绩、收益与预测样本排除维护运行。该端点使用运行控制权限和既有配置，不受账号增删改写入开关限制。

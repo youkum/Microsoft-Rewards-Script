@@ -1,5 +1,5 @@
 import { URLs, REWARDS_BASE_URL } from '../../constants/urls'
-import type { Page } from 'patchright'
+import type { Page, Request } from 'patchright'
 import type { MicrosoftRewardsBot } from '../../index'
 import { saveStorageState } from '../../util/SessionStore'
 import { unknownPageDiagnostic } from '../../util/ErrorDiagnostic'
@@ -25,6 +25,7 @@ type LoginState =
     | 'PASSKEY_VIDEO'
     | 'KMSI_PROMPT'
     | 'LOGGED_IN'
+    | 'SIGN_IN_REQUIRED'
     | 'EMAIL_VERIFICATION_INPUT'
     | 'RECOVERY_EMAIL_INPUT'
     | 'ACCOUNT_LOCKED'
@@ -58,6 +59,8 @@ export class Login {
     private passwordlessMethodSelected = false
     private emailSubmittedCount = 0
     private passwordSubmittedCount = 0
+    private signInNavigationAttempts = 0
+    private lastNavigationError: string | null = null
 
     private readonly selectors = {
         primaryButton:
@@ -105,6 +108,27 @@ export class Login {
     }
 
     async login(page: Page, account: Account, requireVerifiedSession = false) {
+        const failedRequests = new Set<string>()
+        const reportNetworkFailure = (request: Request) => {
+            const url = new URL(request.url())
+            const host = url.hostname.toLowerCase()
+            const authenticationHost =
+                host === 'login.live.com' ||
+                host === 'login.microsoftonline.com' ||
+                host.endsWith('.msauth.net') ||
+                host.endsWith('.msftauth.net')
+            const code = request.failure()?.errorText.match(/net::[A-Z_]+/)?.[0]
+            if (!authenticationHost || !code || code === 'net::ERR_ABORTED') return
+            const key = `${host} | ${code}`
+            if (failedRequests.has(key)) return
+            failedRequests.add(key)
+            this.bot.logger.warn(
+                this.bot.isMobile,
+                'LOGIN',
+                `认证请求失败 | host=${host} | error=${code}；请检查代理到该域名的连接`
+            )
+        }
+        page.on('requestfailed', reportNetworkFailure)
         try {
             suspendMediaBlocking(this.bot, page.context())
             this.capturedUnknownUrls.clear()
@@ -112,13 +136,11 @@ export class Login {
             this.passwordlessMethodSelected = false
             this.emailSubmittedCount = 0
             this.passwordSubmittedCount = 0
+            this.signInNavigationAttempts = 0
+            this.lastNavigationError = null
             this.bot.logger.info(this.bot.isMobile, 'LOGIN', '开始登录流程')
 
-            await page
-                .goto(URLs.rewards.userLogin, {
-                    waitUntil: 'domcontentloaded'
-                })
-                .catch(() => {})
+            await this.navigateLoginPage(page, URLs.rewards.userLogin)
             await this.bot.utils.wait(2000)
             await this.bot.browser.utils.reloadBadPage(page)
             await this.bot.browser.utils.disableFido(page)
@@ -182,7 +204,7 @@ export class Login {
                 previousState = state
 
                 if (state === 'LOGGED_IN') {
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '登录成功')
+                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '已核实登录数据，继续验证并保存会话')
                     break
                 }
 
@@ -206,6 +228,8 @@ export class Login {
                 `致命错误: ${error instanceof Error ? error.message : String(error)}`
             )
             throw error
+        } finally {
+            page.off('requestfailed', reportNetworkFailure)
         }
     }
 
@@ -216,7 +240,7 @@ export class Login {
         const hostname = url.hostname.toLowerCase()
         this.bot.logger.debug(this.bot.isMobile, 'DETECT-STATE', `当前URL: ${hostname}${url.pathname}`)
 
-        if (hostname === 'chromewebdata') {
+        if (hostname === 'chromewebdata' || url.protocol === 'chrome-error:') {
             this.bot.logger.warn(this.bot.isMobile, 'DETECT-STATE', '检测到chromewebdata错误页面')
             return 'CHROMEWEBDATA_ERROR'
         }
@@ -228,8 +252,15 @@ export class Login {
         }
 
         if (hostname === 'bing.com' || hostname.endsWith('.bing.com') || hostname === 'account.microsoft.com') {
-            this.bot.logger.debug(this.bot.isMobile, 'DETECT-STATE', '在Bing/奖励/账户页面，假设已登录')
-            return 'LOGGED_IN'
+            if (await this.hasVerifiedBingSession(page)) return 'LOGGED_IN'
+            if (hostname === 'rewards.bing.com' && /^\/about(?:\/|$)/i.test(url.pathname)) {
+                this.bot.logger.info(this.bot.isMobile, 'DETECT-STATE', 'Rewards 介绍页未完成登录，需要进入认证流程')
+                return 'SIGN_IN_REQUIRED'
+            }
+            if (hostname === 'bing.com' || hostname.endsWith('.bing.com')) {
+                this.bot.logger.debug(this.bot.isMobile, 'DETECT-STATE', 'Bing 页面未返回已登录奖励数据，需要认证')
+                return 'SIGN_IN_REQUIRED'
+            }
         }
 
         // 优先主动探测页面上是否存在非空可见的告警/错误容器
@@ -497,6 +528,62 @@ export class Login {
             .waitForSelector(selector, { state: 'visible', timeout: 5000 })
             .then(() => true)
             .catch(() => false)
+    }
+
+    private async navigateLoginPage(page: Page, target: string): Promise<boolean> {
+        const destination = new URL(target)
+        const label = `${destination.hostname}${destination.pathname}`
+        try {
+            const response = await page.goto(target, { waitUntil: 'domcontentloaded', timeout: 10000 })
+            const landing = new URL(page.url())
+            if (landing.hostname === 'chromewebdata' || landing.protocol === 'chrome-error:') {
+                throw new Error('浏览器网络错误页')
+            }
+            if (response && response.status() >= 400) throw new Error(`HTTP ${response.status()}`)
+            this.lastNavigationError = null
+            this.bot.logger.debug(
+                this.bot.isMobile,
+                'LOGIN',
+                `登录导航完成 | target=${label} | landing=${landing.hostname}${landing.pathname}`
+            )
+            return true
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            const reason = message.match(/net::[A-Z_]+|HTTP \d{3}|浏览器网络错误页/)?.[0] ?? '导航超时或连接失败'
+            this.lastNavigationError = `${label} | ${reason}`
+            this.bot.logger.warn(
+                this.bot.isMobile,
+                'LOGIN',
+                `登录导航失败 | target=${label} | error=${reason}；请检查代理到 Microsoft 登录域名的连接`
+            )
+            return false
+        }
+    }
+
+    private async openSignIn(page: Page): Promise<boolean> {
+        this.signInNavigationAttempts++
+        if (this.signInNavigationAttempts > 3) {
+            throw new Error('多次进入登录入口仍未得到已登录数据，请检查代理与 Microsoft 登录会话')
+        }
+        const target = URLs.auth.bingSignInForCountry(this.bot.userData.geoLocale)
+        const navigated = await this.navigateLoginPage(page, target)
+        if (!navigated && this.signInNavigationAttempts >= 2) {
+            throw new Error(`Microsoft 登录网络连接失败 | ${this.lastNavigationError}；请更换可访问登录域名的代理`)
+        }
+        return true
+    }
+
+    private async hasVerifiedBingSession(page: Page): Promise<boolean> {
+        try {
+            const response = await page.request.get(URLs.bing.rewardsFlyoutForCountry(this.bot.userData.geoLocale), {
+                timeout: 10000
+            })
+            if (!response.ok()) return false
+            const dashboard = mapFlyoutToDashboard(await response.json())
+            return Boolean(dashboard.dataQuality?.balance && dashboard.dataQuality.search)
+        } catch {
+            return false
+        }
     }
 
     private normalizeSignInText(value: string): string {
@@ -771,6 +858,9 @@ export class Login {
             case 'LOGGED_IN':
                 return true
 
+            case 'SIGN_IN_REQUIRED':
+                return this.openSignIn(page)
+
             case 'EMAIL_INPUT': {
                 this.bot.logger.info(this.bot.isMobile, 'LOGIN', '输入邮箱')
                 const result = await this.emailLogin.enterEmail(page, account.email)
@@ -993,30 +1083,8 @@ export class Login {
             }
 
             case 'CHROMEWEBDATA_ERROR': {
-                this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '检测到chromewebdata错误，尝试恢复')
-                try {
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', `导航到 ${REWARDS_BASE_URL}`)
-                    await page
-                        .goto(REWARDS_BASE_URL, {
-                            waitUntil: 'domcontentloaded',
-                            timeout: 10000
-                        })
-                        .catch(() => {})
-                    await this.bot.utils.wait(3000)
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '恢复导航成功')
-                    return true
-                } catch {
-                    this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '回退到login.live.com')
-                    await page
-                        .goto(URLs.auth.loginLive, {
-                            waitUntil: 'domcontentloaded',
-                            timeout: 10000
-                        })
-                        .catch(() => {})
-                    await this.bot.utils.wait(3000)
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '回退导航成功')
-                    return true
-                }
+                this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '检测到浏览器网络错误页，重试区域登录入口')
+                return this.openSignIn(page)
             }
 
             case '2FA_TOTP': {
@@ -1160,9 +1228,8 @@ export class Login {
                 // 尝试消除页面上可能阻断的任意提示弹窗
                 await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
 
-                // 检查是否已经在目标已登录页面
                 if (hostname === 'bing.com' || hostname.endsWith('.bing.com') || hostname === 'account.microsoft.com') {
-                    this.bot.logger.info(this.bot.isMobile, 'LOGIN', '已处于目标已登录域名，判定为已登录')
+                    this.bot.logger.debug(this.bot.isMobile, 'LOGIN', '当前页面尚未核实登录，继续等待认证')
                     return true
                 }
 
@@ -1182,16 +1249,16 @@ export class Login {
     }
 
     private async finalizeLogin(page: Page, account: Account, requireVerifiedSession = false) {
-        this.bot.logger.info(this.bot.isMobile, 'LOGIN', '完成登录')
+        this.bot.logger.info(this.bot.isMobile, 'LOGIN', '验证登录结果')
 
-        await page.goto(REWARDS_BASE_URL, { waitUntil: 'networkidle', timeout: 10000 }).catch(() => {})
+        await this.navigateLoginPage(page, REWARDS_BASE_URL)
 
         const rewardsLanding = new URL(page.url())
         const rewardsHostname = rewardsLanding.hostname.toLowerCase()
         const loginRewardsSuccess = rewardsHostname === 'bing.com' || rewardsHostname.endsWith('.bing.com')
         if (loginRewardsSuccess) {
             if (rewardsHostname === 'rewards.bing.com') {
-                this.bot.logger.info(this.bot.isMobile, 'LOGIN', '成功登录Microsoft Rewards')
+                this.bot.logger.debug(this.bot.isMobile, 'LOGIN', '已到达 Rewards 页面，继续核实登录数据')
             } else {
                 this.bot.logger.info(
                     this.bot.isMobile,
@@ -1200,7 +1267,7 @@ export class Login {
                 )
             }
         } else {
-            this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '无法验证奖励仪表板，假定登录有效')
+            this.bot.logger.warn(this.bot.isMobile, 'LOGIN', '尚未到达奖励仪表板，继续核实 Bing 登录数据')
         }
 
         // Dismiss at rewards dashboard
@@ -1209,7 +1276,8 @@ export class Login {
         this.bot.logger.info(this.bot.isMobile, 'LOGIN', '开始Bing会话验证')
         const verified = await this.verifyBingSession(page, account)
         if (requireVerifiedSession && !verified) {
-            throw new Error('Bing 登录会话未通过上游验证，未保存本次会话；请重试仅登录流程')
+            const detail = this.lastNavigationError ? ` | 登录导航失败=${this.lastNavigationError}` : ''
+            throw new Error(`Bing 登录会话未通过上游验证，未保存本次会话${detail}；请检查代理连接后重试仅登录流程`)
         }
 
         if (!requireVerifiedSession) {
@@ -1238,25 +1306,37 @@ export class Login {
         this.bot.logger.info(this.bot.isMobile, 'LOGIN-BING', '验证Bing会话')
 
         try {
-            await page.goto(url, { waitUntil: 'networkidle', timeout: 10000 }).catch(() => {})
+            await this.navigateLoginPage(page, url)
 
             for (let i = 0; i < loopMax; i++) {
                 if (page.isClosed()) break
 
                 this.bot.logger.debug(this.bot.isMobile, 'LOGIN-BING', `验证循环 ${i + 1}/${loopMax}`)
 
-                const u = new URL(page.url())
-                const hostname = u.hostname.toLowerCase()
-                const atBingPage =
+                let u = new URL(page.url())
+                let hostname = u.hostname.toLowerCase()
+                let atBingPage =
                     (hostname === 'bing.com' || hostname.endsWith('.bing.com')) && hostname !== 'rewards.bing.com'
                 if (!atBingPage) {
                     const state = await this.detectCurrentState(page)
+                    if (state === 'LOGGED_IN') {
+                        this.bot.logger.info(
+                            this.bot.isMobile,
+                            'LOGIN-BING',
+                            'Bing会话验证成功（上游余额与额度已核实）'
+                        )
+                        return true
+                    }
                     if (state === 'PASSKEY_ERROR') {
                         this.bot.logger.info(this.bot.isMobile, 'LOGIN-BING', '关闭Passkey错误状态')
                         await this.bot.browser.utils.ghostClick(page, this.selectors.secondaryButton)
                     }
 
                     await this.handleState(state, page, account)
+                    u = new URL(page.url())
+                    hostname = u.hostname.toLowerCase()
+                    atBingPage =
+                        (hostname === 'bing.com' || hostname.endsWith('.bing.com')) && hostname !== 'rewards.bing.com'
                 }
 
                 this.bot.logger.debug(
@@ -1268,30 +1348,20 @@ export class Login {
                 if (atBingPage) {
                     await this.bot.browser.utils.tryDismissAllMessages(page).catch(() => {})
 
-                    try {
-                        const response = await page.request.get(URLs.bing.rewardsFlyoutForCountry(country), {
-                            timeout: 10000
-                        })
-                        if (response.ok()) {
-                            const dashboard = mapFlyoutToDashboard(await response.json())
-                            if (dashboard.dataQuality?.balance && dashboard.dataQuality.search) {
-                                this.bot.logger.info(
-                                    this.bot.isMobile,
-                                    'LOGIN-BING',
-                                    'Bing会话验证成功（上游余额与额度已核实）'
-                                )
-                                return true
-                            }
-                        }
-                    } catch {
-                        this.bot.logger.debug(this.bot.isMobile, 'LOGIN-BING', '上游尚未返回已登录的奖励数据')
+                    if (await this.hasVerifiedBingSession(page)) {
+                        this.bot.logger.info(
+                            this.bot.isMobile,
+                            'LOGIN-BING',
+                            'Bing会话验证成功（上游余额与额度已核实）'
+                        )
+                        return true
                     }
                 }
 
                 await this.bot.utils.wait(1000)
             }
 
-            this.bot.logger.warn(this.bot.isMobile, 'LOGIN-BING', '无法验证Bing会话，继续执行')
+            this.bot.logger.warn(this.bot.isMobile, 'LOGIN-BING', 'Bing 会话未通过上游验证')
         } catch (error) {
             this.bot.logger.warn(
                 this.bot.isMobile,

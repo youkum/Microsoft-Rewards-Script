@@ -276,7 +276,7 @@ const loginImports = [...loginSource.matchAll(/from '([^']+)'/g)].map(match => m
 const loginDeps = Object.fromEntries(loginImports.map(name => [name, placeholder]))
 loginDeps['../../constants/urls'] = { URLs, REWARDS_BASE_URL: 'https://rewards.bing.com' }
 loginDeps['../FlyoutDashboard'] = flyout
-loginDeps['../MediaBlocker'] = { configureMediaBlocking: async () => {} }
+loginDeps['../MediaBlocker'] = { configureMediaBlocking: async () => {}, suspendMediaBlocking() {} }
 loginDeps['../../util/SessionStore'] = sessionStore
 const { Login } = load('src/browser/auth/Login.ts', loginDeps)
 
@@ -304,6 +304,163 @@ test('Bing session validation uses the regional sign-in destination and verifies
         assert.equal(await new Login(b).verifyBingSession(page, account), true)
     }
     assert.equal(new URL(URLs.auth.bingSignInForCountry('US')).hostname, 'www.bing.com')
+})
+
+test('public Rewards about page requests authentication without claiming login success', async () => {
+    const b = bot()
+    const messages = []
+    b.logger = { ...logger, info: (_mobile, _title, message) => messages.push(message) }
+    const page = {
+        waitForLoadState: async () => {},
+        waitForSelector: async () => {
+            throw new Error('No login selectors')
+        },
+        url: () => 'https://rewards.bing.com/about',
+        request: { get: async () => ({ ok: () => false }) }
+    }
+    const login = new Login(b)
+    assert.equal(await login.detectCurrentState(page), 'SIGN_IN_REQUIRED')
+    assert.ok(messages.some(message => message.includes('未完成登录')))
+})
+
+test('Bing hostname alone cannot validate login, but verified zero-balance rewards data can', async () => {
+    const b = bot()
+    let data = payload(0)
+    const page = {
+        waitForLoadState: async () => {},
+        waitForSelector: async () => {
+            throw new Error('No login selectors')
+        },
+        url: () => 'https://cn.bing.com/',
+        request: { get: async () => ({ ok: () => true, json: async () => data }) }
+    }
+    const login = new Login(b)
+    assert.equal(await login.detectCurrentState(page), 'LOGGED_IN')
+    data = payload(0)
+    data.userInfo.isRewardsUser = false
+    assert.equal(await login.detectCurrentState(page), 'SIGN_IN_REQUIRED')
+})
+
+test('verified existing Bing session is reusable even when Rewards redirects to about', async () => {
+    const b = bot()
+    const page = {
+        waitForLoadState: async () => {},
+        waitForSelector: async () => {
+            throw new Error('No account lock')
+        },
+        url: () => 'https://rewards.bing.com/about',
+        request: { get: async () => ({ ok: () => true, json: async () => payload(2003) }) }
+    }
+    assert.equal(await new Login(b).detectCurrentState(page), 'LOGGED_IN')
+})
+
+test('normal login reports failed authentication hosts once, removes listeners and does not save a failed session', async () => {
+    const b = bot()
+    b.config = { sessionPath: 'sessions' }
+    b.utils.wait = async () => {}
+    b.browser = { utils: { reloadBadPage: async () => {}, disableFido: async () => {} } }
+    const messages = []
+    b.logger = { ...logger, warn: (_mobile, _title, message) => messages.push(message) }
+    let handler
+    const failedRequest = {
+        url: () => 'https://logincdn.msauth.net/script?token=secret',
+        failure: () => ({ errorText: 'net::ERR_TUNNEL_CONNECTION_FAILED' })
+    }
+    const page = {
+        on: (_event, callback) => {
+            handler = callback
+        },
+        off: (_event, callback) => {
+            assert.equal(callback, handler)
+            handler = null
+        },
+        context: () => ({}),
+        goto: async () => {
+            handler(failedRequest)
+            handler(failedRequest)
+            throw new Error('page.goto: net::ERR_TUNNEL_CONNECTION_FAILED')
+        },
+        waitForLoadState: async () => {},
+        isClosed: () => false,
+        url: () => 'chrome-error://chromewebdata/'
+    }
+    await assert.rejects(new Login(b).login(page, account, true), /登录网络连接失败/)
+    assert.equal(handler, null)
+    assert.equal(messages.filter(message => message.includes('host=logincdn.msauth.net')).length, 1)
+    assert.ok(messages.every(message => !message.includes('token=secret')))
+})
+
+test('failed navigation logs the target and network code and bounded recovery exits without success', async () => {
+    const b = bot()
+    const messages = []
+    b.logger = { ...logger, warn: (_mobile, _title, message) => messages.push(message) }
+    const login = new Login(b)
+    const page = {
+        goto: async () => {
+            throw new Error(
+                'page.goto: net::ERR_TUNNEL_CONNECTION_FAILED at https://login.microsoftonline.com/?secret=sensitive'
+            )
+        },
+        url: () => 'chrome-error://chromewebdata/',
+        waitForLoadState: async () => {}
+    }
+    assert.equal(await login.detectCurrentState(page), 'CHROMEWEBDATA_ERROR')
+    assert.equal(await login.navigateLoginPage(page, URLs.rewards.userLogin), false)
+    assert.ok(messages.some(message => message.includes('ERR_TUNNEL_CONNECTION_FAILED')))
+    assert.ok(messages.every(message => !message.includes('secret') && !message.includes('恢复导航成功')))
+    assert.equal(await login.handleState('CHROMEWEBDATA_ERROR', page, account), true)
+    await assert.rejects(
+        login.handleState('CHROMEWEBDATA_ERROR', page, account),
+        /Microsoft 登录网络连接失败.*ERR_TUNNEL_CONNECTION_FAILED/
+    )
+})
+
+test('about redirect re-enters regional authentication and validates the refreshed landing URL in the same iteration', async () => {
+    const b = bot()
+    b.utils.wait = async () => {}
+    b.browser = { utils: { tryDismissAllMessages: async () => {} } }
+    let location = 'https://rewards.bing.com/about'
+    let navigations = 0
+    const page = {
+        goto: async () => {
+            navigations++
+            location = navigations === 1 ? 'https://rewards.bing.com/about' : 'https://cn.bing.com/'
+        },
+        url: () => location,
+        isClosed: () => false,
+        waitForLoadState: async () => {},
+        waitForSelector: async () => {
+            throw new Error('No account lock')
+        },
+        request: { get: async () => ({ ok: () => navigations >= 2, json: async () => payload(2003) }) }
+    }
+    assert.equal(await new Login(b).verifyBingSession(page, account), true)
+    assert.equal(navigations, 2)
+})
+
+test('navigation that resolves on a browser network error or HTTP 403 is still a failure', async () => {
+    const b = bot()
+    const login = new Login(b)
+    assert.equal(
+        await login.navigateLoginPage(
+            {
+                goto: async () => undefined,
+                url: () => 'chrome-error://chromewebdata/'
+            },
+            URLs.auth.loginLive
+        ),
+        false
+    )
+    assert.equal(
+        await login.navigateLoginPage(
+            {
+                goto: async () => ({ status: () => 403 }),
+                url: () => 'https://login.live.com/'
+            },
+            URLs.auth.loginLive
+        ),
+        false
+    )
 })
 
 test('anonymous Bing pages never validate mobile sessions or overwrite saved sessions', async () => {

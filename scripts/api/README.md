@@ -1054,6 +1054,12 @@ HTTP CONNECT proxies can access HTTPS websites using a proxy address starting
 with `http://`. A proxy address starting with `https://` requires the proxy endpoint
 itself to accept TLS. An exit IP is displayed only when an echo service returns one.
 
+Login additionally needs access to Microsoft's authentication hosts and assets,
+including `login.microsoftonline.com`, `login.live.com` and `logincdn.msauth.net`.
+Browser navigation failures are logged with a target and `net::ERR_*` code. An
+unverified Rewards `/about` landing re-enters regional authentication with bounded
+retries; failed maintenance leaves the previous saved session intact.
+
 Account add/update/delete endpoints are gated by `API_ALLOW_ACCOUNT_WRITE`
 (default `true`).
 
