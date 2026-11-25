@@ -7,13 +7,15 @@
 支持桌面端/移动端搜索、每日打卡、阅读赚积分、连击保护、微信推送通知，并配备了基于 Server-Sent Events (SSE) 的 WebUI 仪表盘系统。
 
 ## 技术栈与关键依赖
+接手入口为 [AI 交接指南](AI-HANDOFF.md) 与 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)，核对配置持久化、代理握手与完整地址显示契约。离线 AI 分发包已撤下，使用当前源码和仓库文档。
+
 - **运行时环境**: Node.js >= 24.0.0
 - **开发语言**: TypeScript 5.x / 6.x
 - **浏览器驱动**: Patchright (`patchright`, Playwright 无头反检测替代品)
 - **风控防护**: `fingerprint-generator`, `fingerprint-injector`, `ghost-cursor-playwright-port`
 - **双因子认证**: `otpauth` (RFC 6238 TOTP)
 - **架构部署**: Docker & Docker Compose (阿里云/国内加速源优化版 Dockerfile.cn)
-- **Web 控制台**: 依赖 `scripts/api/` (Control API :3010) 与 `rewards-dashboard` (:8890)
+- **Web 控制台**: `scripts/api/` 内嵌面板与 Control API，容器内 :3010，宿主机默认 127.0.0.1:8890
 
 ---
 

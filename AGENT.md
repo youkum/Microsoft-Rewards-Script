@@ -6,8 +6,8 @@ This repository contains the optimized China edition of Microsoft Rewards Script
 - Mode: This project is completely secondary-developed and maintained by AI with human assistance, with humans providing prompts and architectural suggestions (此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化).
 
 > **AI reviewers / new agents: start with [`AI-HANDOFF.md`](./AI-HANDOFF.md)** — it documents the current
-> points data-quality model, independent account login, WebUI contracts, and verification scope.
-> User-facing changes are summarized in [`RELEASE_NOTES_20261119.md`](./RELEASE_NOTES_20261119.md).
+> points data-quality model, independent account login, persistent settings/history, proxy contracts, and verification scope.
+> Current user-facing changes and deployment steps are summarized in [`RELEASE_NOTES_20261125.md`](./RELEASE_NOTES_20261125.md).
 
 ## Essential Knowledge for AI Coding Agents
 
@@ -23,6 +23,9 @@ This repository contains the optimized China edition of Microsoft Rewards Script
 - `scripts/api/logParser.js`: Regular expressions for parsing terminal logs to feed the WebUI dashboard.
 - `scripts/api/processManager.js`: Task/login run modes, process lifetime, and run lock.
 - `scripts/api/server.js`: HTTP API server powering the WebUI on port 3010.
+- `scripts/api/proxyTester.js`: Cancellable proxy CONNECT/TLS checks and fallback exit-IP services.
+- `scripts/api/web/accounts.js`: Full proxy address display and distinct connection/IP-query feedback.
+- `scripts/atomicFile.cjs` & `scripts/api/runHistory.js`: Config symlink preservation and persistent lifetime account statistics.
 - `compose.yaml` & `Dockerfile.cn`: Containerized orchestration with accelerated mirror support.
 
 ### 2. Modification Rules
@@ -34,3 +37,6 @@ This repository contains the optimized China edition of Microsoft Rewards Script
 5. **Verify code changes with `npm run build` and `npm test`**. Run `npm run test:log-parser` for log changes; use performance/preview checks when those paths change. Documentation-only edits need formatting and source/link checks.
 6. **Do not modify `.env` or check in credentials, session cookies, production logs, or diagnostic artifacts**. Update `CHANGELOG.md` and relevant user/API/agent guidance alongside behavior changes.
 7. **Preserve Docker config links and lifetime statistics**. Config writes use `scripts/atomicFile.cjs` to replace the real target. `scripts/api/runHistory.js` persists bounded records and independent account totals; import retained legacy points history without double counting, and exclude login maintenance from totals. Back up the old container's active root config before recreating it. Verify repeated restarts with synthetic settings/history and retain mounted `config/` and `sessions/`.
+8. **Keep proxy addresses and connection outcomes accurate**. Use `formatProxyAddress()` for full protocol/host/effective-port display, with credentials removed. HTTP CONNECT can access HTTPS targets; `https://` means a TLS proxy endpoint. Own handshake socket errors and cancellation. Return `IP_ECHO_UNAVAILABLE` when Bing is reachable but no echo IP was obtained. Run proxy, HTTP and WebUI regression tests when these paths change.
+
+AI handoff uses the current checkout and repository documentation. The standalone offline AI distribution has been withdrawn.

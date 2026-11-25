@@ -2,6 +2,8 @@
 
 本文件用于复现验收，不是生产部署证明。项目关系及许可见 [第三方声明](THIRD-PARTY-NOTICES.md)，公开变更与发布状态分别见 [更新日志](CHANGELOG.md) 和 [GitHub Releases](https://github.com/youkum/Microsoft-Rewards-Script/releases)。
 
+当前操作范围与既有证据见 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)。AI 接手使用当前源码和 [AI 交接指南](AI-HANDOFF.md)，离线 AI 分发包已撤下。
+
 ## 1. 构建与自动化验证
 
 在待验收提交的干净检出中，使用 Node.js 24：
@@ -27,6 +29,7 @@ npm run format:check
 | 独立登录维护         | [运行入口](src/index.ts)、[进程管理](scripts/api/processManager.js)；核对单账号、平台、严格保存、退出与维护统计隔离                              |
 | 积分可信度与计数     | [区域映射](src/browser/FlyoutDashboard.ts)、[积分读取](src/browser/BrowserFunc.ts)、[日志解析](scripts/api/logParser.js)；核对未知数据与重复汇总 |
 | WebUI 与 API         | [API 文档](scripts/api/README.md) 与 [静态模块](scripts/api/web/)；检查控制台、鉴权、模块加载及 SSE                                              |
+| 代理测试与地址显示   | [代理测试](scripts/api/proxyTester.test.js) 与 [页面回归](scripts/api/web/ui.test.js)；核对完整地址、回显备用、握手断开和超时取消                |
 | 预测与通知           | [预测逻辑](scripts/rewardForecast.cjs)；先用不发送通知的预览，再单独记录经授权的送达验证                                                         |
 | 调度与回滚           | [容器入口](scripts/docker/entrypoint.sh)；用测试容器检查 cron 启停和无任务启动，生产中已保存的计划另行核对                                       |
 
@@ -45,7 +48,9 @@ npm run format:check
 
 用合成数据保存通知和积分配置，重启 API 并重建根配置链接，确认真实挂载文件及设置保留；设置小的 `API_RUN_HISTORY`，确认账号累计不随记录截断、JSONL 轮转或重复重启清零/双计。实际容器复验前先导出旧容器配置并停止活动任务、备份持久目录。只比较已结算记录，不宣称突然断电可恢复进行中的任务。
 
-源码契约测试、模拟 HTTP/UI 与真实上游证据分别记录；源码检查通过不能代替已登录接口响应。当前变更及验证范围见 [更新日志](CHANGELOG.md) 与 [2026-11-19 更新说明](RELEASE_NOTES_20261119.md)。
+代理验收应覆盖裸 IP、HTTP、HTTPS、URL 内端口及独立端口覆盖、IPv6 和凭据脱敏。模拟 TLS 入口直接断开与目标 TLS EOF，多次调用真实代理测试 API 后确认控制器继续可用；用有效回显和“回显失败但 Bing 成功”分别确认出口 IP 与 `IP_ECHO_UNAVAILABLE` 提示。真实代理白名单应放行部署服务器出口，使用供应商实际入口协议。
+
+源码契约测试、模拟 HTTP/UI 与真实上游证据分别记录；当前变更及验证范围见 [更新日志](CHANGELOG.md) 与 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)，历史积分与登录修复见 [11 月 19 日说明](RELEASE_NOTES_20261119.md)。
 
 ## 3. 已运行实例的只读核验
 

@@ -8,8 +8,9 @@ Microsoft Rewards Script (China Edition with WebUI Dashboard).
 - Maintenance: Fully secondary-developed by AI with human assistance, where humans provided prompts and architectural guidance (此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化).
   A TypeScript & Patchright-based automated agent for Microsoft Rewards tasks, featuring regional points lookup with explicit data quality, an adaptive login state machine, and an embedded WebUI with independent account-session saving.
 
-> **Review/handoff note:** read [`AI-HANDOFF.md`](./AI-HANDOFF.md) before changing points, login, or API
-> behavior. Keep [`CHANGELOG.md`](./CHANGELOG.md), user instructions, and the API contract synchronized.
+> **Review/handoff note:** read [`AI-HANDOFF.md`](./AI-HANDOFF.md) before changing points, login, persistence, proxies, or API
+> behavior. Current deployment and proxy guidance is in [`RELEASE_NOTES_20261125.md`](./RELEASE_NOTES_20261125.md).
+> Keep [`CHANGELOG.md`](./CHANGELOG.md), user instructions, and the API contract synchronized. Handoff uses the current checkout and repository docs; the offline AI distribution has been withdrawn.
 
 ## Common Developer Commands
 

@@ -10,6 +10,8 @@
 
 ## 技术栈与关键依赖
 
+开始修改前阅读 [AI 交接指南](AI-HANDOFF.md) 和 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)，核对配置持久化、代理握手及完整地址显示契约。离线 AI 分发包已撤下，接手使用当前源码及仓库文档。
+
 - **运行时环境**: Node.js >= 24.0.0
 - **开发语言**: TypeScript 5.x / 6.x
 - **浏览器驱动**: Patchright (`patchright`, Playwright 无头反检测替代品)

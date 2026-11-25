@@ -1,22 +1,25 @@
 # AI-HANDOFF · 当前实现交接与审查指南
 
-本文面向接手或审查本仓库的工程师与 AI 编程代理，无需原始对话上下文。包括 2026-11-19 积分接口/独立登录与 2026-11-21 设置/累计统计持久化修复；早期 WebUI 改造记录见 Git 历史及 [更新日志](CHANGELOG.md)。仓库为 [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) 的 `V4-china` 分支，许可为 GPL-3.0-or-later，派生关系见 [第三方声明](THIRD-PARTY-NOTICES.md)。
+本文面向接手或审查本仓库的工程师与 AI 编程代理，无需原始对话上下文。包括 2026-11-19 积分接口/独立登录、2026-11-21 设置/累计统计持久化以及 2026-11-25 代理测试和完整地址显示修复；最新操作说明见 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)，历史见 [更新日志](CHANGELOG.md)。仓库为 [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script) 的 `V4-china` 分支，许可为 GPL-3.0-or-later，派生关系见 [第三方声明](THIRD-PARTY-NOTICES.md)。
+
+接手时使用当前源码及本指南。离线 AI 分发包已撤下，相关依赖与运行时按 [开发指南](DEVELOPMENT.md) 安装。
 
 ## 1. 当前范围与入口
 
 内嵌 WebUI 提供账号管理、代理测试、任务控制、交互日志、积分历史、通知预测、调度与会话诊断。常规任务负责执行积分活动；独立登录负责单账号认证和按平台保存会话。两种运行共用进程管理器，统计与通知分开处理。
 
-| 模块         | 关键文件与职责                                                                                                      |
-| ------------ | ------------------------------------------------------------------------------------------------------------------- |
-| 运行入口     | `src/index.ts`：账号/集群调度、账号状态重置、`saveLoginOnly()`、任务结算与通知                                      |
-| 积分数据     | `src/browser/BrowserFunc.ts`、`FlyoutDashboard.ts`：区域数据读取、映射、余额探测与会话 checkpoint                   |
-| 类型与域名   | `src/interface/DashboardData.ts`、`Points.ts`、`src/constants/urls.ts`：数据可信度与区域 URL                        |
-| 登录认证     | `src/browser/auth/Login.ts` 及 `methods/`：状态机、安全邮箱/验证码交互、上游会话验证                                |
-| 账号配置     | `src/util/Load.ts`、`scripts/credentialEnv.cjs`、`scripts/api/envStore.js`、`accounts.js`：凭据解析、槽位合并与筛选 |
-| API/运行管理 | `scripts/api/server.js`、`processManager.js`：鉴权、维护入口、子进程生命周期与运行锁                                |
-| 积分展示     | `scripts/api/logParser.js`、`pointsHistory.js`、`scripts/rewardForecast.cjs`：实时增量、持久历史和预测              |
-| 前端         | `scripts/api/web/`：原生 ES modules，无独立构建；新模块需加入静态资源白名单                                         |
-| 部署         | `compose.yaml`、`compose.override.yaml`、两个 Dockerfile、`scripts/docker/entrypoint.sh`：API/cron 与持久目录       |
+| 模块          | 关键文件与职责                                                                                                      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------- |
+| 运行入口      | `src/index.ts`：账号/集群调度、账号状态重置、`saveLoginOnly()`、任务结算与通知                                      |
+| 积分数据      | `src/browser/BrowserFunc.ts`、`FlyoutDashboard.ts`：区域数据读取、映射、余额探测与会话 checkpoint                   |
+| 类型与域名    | `src/interface/DashboardData.ts`、`Points.ts`、`src/constants/urls.ts`：数据可信度与区域 URL                        |
+| 登录认证      | `src/browser/auth/Login.ts` 及 `methods/`：状态机、安全邮箱/验证码交互、上游会话验证                                |
+| 账号配置      | `src/util/Load.ts`、`scripts/credentialEnv.cjs`、`scripts/api/envStore.js`、`accounts.js`：凭据解析、槽位合并与筛选 |
+| API/运行管理  | `scripts/api/server.js`、`processManager.js`：鉴权、维护入口、子进程生命周期与运行锁                                |
+| 积分展示      | `scripts/api/logParser.js`、`pointsHistory.js`、`scripts/rewardForecast.cjs`：实时增量、持久历史和预测              |
+| 前端          | `scripts/api/web/`：原生 ES modules，无独立构建；新模块需加入静态资源白名单                                         |
+| 代理测试/显示 | `scripts/api/proxyTester.js`、`scripts/api/web/accounts.js`：CONNECT/TLS 取消、回显备用、完整地址与结果提示         |
+| 部署          | `compose.yaml`、`compose.override.yaml`、两个 Dockerfile、`scripts/docker/entrypoint.sh`：API/cron 与持久目录       |
 
 ## 2. 区域接口与数据可信度
 
@@ -72,6 +75,8 @@ API 管理的运行结束后，`runHistory.js` 原子保存 `config/run-history.
 
 ## 6. 可复现验证与已验证范围
 
+2026-11-25 源码提交 `f5818a2` 已通过构建、126 项核心/API/WebUI 与 5 项预览测试、修改文件的 ESLint/格式检查。Linux amd64 中国版镜像已部署，浏览器实际渲染确认完整代理地址，白名单代理出口回显及 Bing HTTPS 证书校验通过，部署前后持久文件与统计一致。代理测试修复提交 `1d47e92` 的全仓 ESLint 为 0 错误、3 个既有警告。具体范围见 [更新说明](RELEASE_NOTES_20261125.md)，后续提交按实际检查记录核对。
+
 使用 Node.js 24，在目标提交干净检出中执行：
 
 ```bash
@@ -92,7 +97,7 @@ npm run format:check
 
 修复提交 `bfb2bcd` 的 [CI](https://github.com/youkum/Microsoft-Rewards-Script/actions/runs/44448717681) 已全部通过，包含 validate 与两架构 × 两 Dockerfile 的四个原生容器任务。后续发布需重新核对目标提交。
 
-部署环境完成 Docker 构建、健康检查，已保存会话的上游余额/额度读取通过；实测部分每日/推广/阅读活动入账，面板实际检查限于账号管理与登录交互。未据此确认完整 UI 视觉验收、通知送达或全部活动。分支源码更新、部署和正式 tag/Release 是不同状态，详见 [本次更新说明](RELEASE_NOTES_20261119.md)。
+2026-11-19 部署完成 Docker 构建、健康检查与已保存会话的上游余额/额度读取，实测部分每日/推广/阅读活动入账及账号登录交互，详细历史见 [当日更新说明](RELEASE_NOTES_20261119.md)。2026-11-25 的代理及部署验证见 [当前更新说明](RELEASE_NOTES_20261125.md)。
 
 `scripts/api/rewardsData.test.js` 覆盖区域 Cookie、数据可信度、账号重置、严格保存与退出；HTTP/UI 测试覆盖账号过滤、平台校验、按钮及维护统计隔离。部分核心回归是源码契约检查，不能代替真实上游响应验证。账号、日志、会话与截图仅存私有记录，不属于分发产物。
 

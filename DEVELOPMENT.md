@@ -1,5 +1,7 @@
 # 开发、验证与升级
 
+当前入口为 `V4-china` 源码、[2026-11-25 更新说明](RELEASE_NOTES_20261125.md) 与 [AI 交接指南](AI-HANDOFF.md)。离线 AI 分发包已撤下，依赖与浏览器按本指南安装。
+
 ## 平台范围与验证状态
 
 当前容器目标为 Linux x86-64 (`linux/amd64`) 和 ARM64 (`linux/arm64`)，使用 Node.js 24 + Debian Bookworm/glibc。32 位 x86、ARMv7、Alpine/musl 不在这次支持范围内。Windows x64 可以本地构建；ARM64 推荐使用 Linux 容器，本次没有验证 Windows ARM 或 macOS ARM 的原生运行。
@@ -84,6 +86,9 @@ docker run --rm --init --network none --shm-size=256m --entrypoint node \
 
 ## 面板迭代边界
 
+- `accounts.js` 的 `formatProxyAddress()` 统一显示协议、主机和有效端口，覆盖旧裸 IP、URL 内端口、独立端口覆盖及 IPv6。标签与悬停文本都移除凭据及路径参数。
+- `proxyTester.js` 按顺序尝试 HTTPS IP 回显并保留旧回显备用；CONNECT/TLS 断开、认证、响应中断及超时均通过请求返回。超时需取消尚未分配给 HTTP 请求的 Socket。全部回显失败后同代理 Bing HTTPS 成功返回 `connected: true` 和 `IP_ECHO_UNAVAILABLE`。
+- 代理回归执行 `node --test scripts/api/proxyTester.test.js scripts/api/server.test.js scripts/api/web/ui.test.js`，包含真实 API 重复握手失败、公开合成证书及仅回环代理。实际供应商验证单独记录协议、认证、有效回显及 Bing 响应。
 - `scripts/api/web/app.js`：登录、SSE、导航和布局。
 - `dashboard.js` + `refresh.js`：总览展示、请求生命周期与轮询。
 - `accounts.js`、`points.js`、`logs.js`、`settings.js`：功能视图。
@@ -99,6 +104,7 @@ docker run --rm --init --network none --shm-size=256m --entrypoint node \
 3. 检查 `compose.override.yaml`：默认随 Compose 自动加载，要求 `.env` 配置 `API_TOKEN`；浏览器登录还需要 `DASHBOARD_PASSWORD`。可以用 `docker compose config --quiet` 检查插值，避免把完整配置输出到日志。
 4. 执行 `docker compose up -d --build`。默认 `RUN_ON_START=false` 且初始计划为空，先手动检查；已持久化的 `schedule.json` 仍优先，请在维护前停用已有调度。
 5. 检查健康状态、静态模块加载与登录，并确认账号/历史/配置数据保留。Web 文件改变后刷新页面；在账号管理使用“保存登录会话”验证认证及上游余额/额度读取，确认只选择该账号、每端保存并退出，积分历史不新增维护记录。普通积分任务另行验证。
+   代理相关更新后按 `Ctrl + F5` 刷新，核对完整地址与悬停文本，分别检查有效出口 IP、IP 查询不可用及连接失败三种结果，详见 [当前更新说明](RELEASE_NOTES_20261125.md)。
 6. 回滚时使用此前记录的源码和镜像；如新版本更改了持久化格式，先停服务，再恢复相匹配的备份。2026-11-21 新增 `config/run-history.json`，旧版可忽略它，勿删除新统计文件。
 
 配置的原子写入共用 `scripts/atomicFile.cjs`，先解析真实路径再替换，禁止直接 rename 覆盖 Docker 符号链接。`runHistory.js` 将最近记录和独立账号累计统计写入一个快照；任务水位及同时间运行标识防止旧 JSONL 导入、备份恢复重复计数。积分报表仍单独按时间查询和轮转。修改这些逻辑时运行 `persistence.test.js` 与 HTTP 连续重启测试，验证小记录上限、历史轮转、登录隔离、备份损坏及设置保留；不要用生产账号或通知作为测试数据。

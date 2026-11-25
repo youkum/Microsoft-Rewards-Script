@@ -1,5 +1,6 @@
 # GitHub Copilot Instructions for Microsoft Rewards Script
 
+- Read [AI-HANDOFF.md](../AI-HANDOFF.md) and [the current update guide](../RELEASE_NOTES_20261125.md) for persistence, proxy testing and complete-address display contracts. Use the current checkout and repository docs for handoff; the offline AI distribution has been withdrawn.
 - This is a TypeScript project targeting Node.js >= 24.
 - Use ES modules syntax and ensure all types are strictly compatible with TypeScript 5.x/6.x.
 - Do not introduce native dependencies that break in Docker or Windows without fallbacks.

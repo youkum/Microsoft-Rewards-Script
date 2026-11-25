@@ -5,6 +5,7 @@
 
 - **本项目仓库**: [youkum/Microsoft-Rewards-Script](https://github.com/youkum/Microsoft-Rewards-Script)
 - **主力维护分支**: `V4-china`
+- **当前交接入口**: [AI 交接指南](AI-HANDOFF.md)、[2026-11-25 更新说明](RELEASE_NOTES_20261125.md) 与 [开发验证指南](DEVELOPMENT.md)。离线 AI 分发包已撤下，接手使用当前源码和仓库文档。
 - **一键克隆命令**:
     ```bash
     git clone -b V4-china https://github.com/youkum/Microsoft-Rewards-Script.git

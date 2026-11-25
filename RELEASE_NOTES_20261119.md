@@ -1,5 +1,7 @@
 # 2026-11-19 更新说明（V4-china 积分与独立登录修复）
 
+本文保留 2026-11-19 的变更及当时验证记录。后续持久化、代理测试、完整地址显示及当前部署步骤见 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)。
+
 本次修复积分读取失败时的降级判定与收益重复累计，并新增单账号保存登录会话。更新维护在 `V4-china` 开发分支，未新建正式标签或 GitHub Release；正式产物以 [GitHub Releases](https://github.com/youkum/Microsoft-Rewards-Script/releases) 为准。
 
 ## 1. 单账号保存登录会话

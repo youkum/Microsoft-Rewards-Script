@@ -21,7 +21,7 @@ The API can:
 
 The HTTP server uses Node.js built-ins; proxy tests use the project's proxy-agent
 dependencies. API scripts follow the project's ESM `.js` convention. Current
-changes and verification scope are recorded in [the 2026-11-19 notes](../../RELEASE_NOTES_20261119.md).
+changes and verification scope are recorded in [the 2026-11-25 notes](../../RELEASE_NOTES_20261125.md).
 
 ---
 

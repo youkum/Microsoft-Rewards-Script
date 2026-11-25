@@ -9,7 +9,7 @@
 [![Node](https://img.shields.io/badge/node-%3E%3D24-green.svg)](./package.json)
 [![WebUI](https://img.shields.io/badge/WebUI-Supported-brightgreen.svg)](./scripts/api/README.md)
 [![Vibe Coding](https://img.shields.io/badge/100%25-AI%20Secondary%20Developed-8A2BE2.svg)](./VIBECODING.md)
-[更新日志](./CHANGELOG.md) · [构建与部署验收](./CODEX_INSPECTION_GUIDE.md)
+[更新日志](./CHANGELOG.md) · [2026-11-25 更新说明](./RELEASE_NOTES_20261125.md) · [构建与部署验收](./CODEX_INSPECTION_GUIDE.md)
 [![Upstream](https://img.shields.io/badge/上游-TheNetsky/Microsoft--Rewards--Script-informational.svg)](https://github.com/TheNetsky/Microsoft-Rewards-Script)
 
 **基于 TypeScript · Patchright(Playwright) · 区域积分读取与可信度校验 · 独立登录保存 · WebUI 控制面板**
@@ -19,8 +19,7 @@
 </div>
 
 > [!IMPORTANT]
-> **`V4-china` 是默认开发分支，不代表正式发布。** 当前更新包含区域积分接口修复、单账号保存登录会话、内嵌 WebUI 与 PushPlus 预测。部署前请核对对应提交的 [CI](https://github.com/youkum/Microsoft-Rewards-Script/actions/workflows/validate.yml)；正式版本以 [GitHub Releases](https://github.com/youkum/Microsoft-Rewards-Script/releases) 为准。
-> 详细说明见 [2026-11-19 更新说明](RELEASE_NOTES_20261119.md)，版本升级或迁移请参考 [升级与回滚指南](UPGRADE_GUIDE.md)。
+> **`V4-china` 是默认维护分支。** 当前源码包含配置与累计统计持久化、代理握手异常处理、出口 IP 备用查询及完整代理地址显示。部署时核对源码提交与对应 [验证记录](https://github.com/youkum/Microsoft-Rewards-Script/actions/workflows/validate.yml)，操作说明见 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)，升级或迁移见 [升级与回滚指南](UPGRADE_GUIDE.md)。
 
 > [!NOTE]
 > 🤖 **项目维护与开发声明**：**此项目由 AI 在人类的帮助下全面接手二次开发，人工提供了开发建议和提示词优化。**
@@ -58,6 +57,12 @@
 
 > 完整历史记录见 📄 [CHANGELOG.md](./CHANGELOG.md)。
 
+- **2026-11-25**：
+    - **代理测试异常修复**：捕获 CONNECT/TLS 握手断开与超时，避免测试失败导致 API 或容器重启；补充认证、权限及协议错误提示。
+    - **出口 IP 与地址显示**：增加 HTTPS 回显备用服务，区分代理连接失败与 IP 查询失败；账号表格完整显示协议、主机及端口。
+    - **指导文档同步**：更新代理配置、网页部署、数据保留及 AI 交接说明，详见 [更新说明](RELEASE_NOTES_20261125.md)。
+- **2026-11-23**：统一保留 `V4-china` 维护分支，整合旧 `main` 历史。
+- **2026-11-21**：修复配置保存覆盖挂载符号链接的问题，持久保存运行记录与独立账号累计统计；重启及重建复用原目录保留数据。
 - **2026-11-19**：
     - **保存登录会话**：账号管理可独立登录一个账号，默认手机端、电脑端依次核实并立即保存，无需执行完整积分任务；维护不计收益，结束后释放任务占用。
     - **区域接口与收益核实**：优先区域 Flyout，浏览器备用请求共享 Cookie；未核实额度不算完成，未知余额不结算成功收益，每账号重置状态。
@@ -541,6 +546,8 @@ docker compose restart          # 快捷重启
 账号列表显示已配置的完整代理地址，例如 `http://203.0.113.7:10809`；旧裸 IP 同样按 HTTP 显示。单独填写的端口优先于地址中的端口，认证凭据只显示锁图标。点击“测代理”后，结果中的出口 IP 由回显服务查询。
 
 “测代理”优先使用 HTTPS 回显并尝试备用服务。连接可用但回显服务被限制时，面板提示“代理已连通，但出口 IP 查询失败”；测试得到的 IP 来自回显服务，代理主机地址无法替代出口 IP。HTTPS 握手失败会返回错误，修复后的测试组件会捕获断开和超时异常。
+
+地址仍只显示协议或旧格式时，核对源码是否包含 `f5818a2` 或后续提交，重建镜像后按 `Ctrl + F5` 刷新面板。代理配置及故障提示对照见 [2026-11-25 更新说明](RELEASE_NOTES_20261125.md)。
 
 > ⚠️ `ignoreCertificateErrors` 会削弱整个浏览器上下文的 TLS 保护，仅在受信拦截代理无法出示有效证书时开启。
 
