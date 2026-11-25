@@ -98,6 +98,7 @@ npm run format:check
 
 ## 7. 审查与后续修改
 
+- 账号列表的代理标签通过 `formatProxyAddress()` 格式化协议、主机和有效端口，禁止使用 `split(':')[0]` 截取地址。保留旧裸 IP、URL 端口、独立端口覆盖和 IPv6 显示，标签与 title 均不得包含认证凭据或路径参数；代理入口与测试回显出口在各自位置展示。
 - 2026-11-25 代理测试修复在 `scripts/api/proxyTester.js`。HTTP(S) CONNECT 自行管理握手与 Socket 错误，超时要取消未分配给请求的底层连接。出口 IP 必须来自回显，全部回显失败后同代理 Bing HTTPS 成功返回 `connected: true` / `IP_ECHO_UNAVAILABLE`，`ok` 仍为 `false`。`http://` 支持 HTTPS 网站转发，`https://` 表示 TLS 代理入口。回归仅使用回环服务和公开合成测试证书，真实代理问题仍需记录协议及目标响应。
 - 2026-11-23 收拢分支后，`V4-china` 为唯一保留的维护分支。旧 `main` 通过保留当前 v4 文件的合并策略整合提交历史，旧实现可从合并的第二父提交追溯；格式修复分支已由 `33d9da6` 合入。后续开发以当前 v4 架构和配置为准。
 - 按 [验收指南](CODEX_INSPECTION_GUIDE.md) 检查未知数据、重复累计、账号隔离、维护运行退出与历史隔离。

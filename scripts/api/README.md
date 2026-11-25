@@ -920,6 +920,12 @@ Email addresses are returned in full for the local dashboard. Passwords,
 recovery addresses, TOTP secrets, and separate proxy username/password values
 are not returned; the configured proxy URL and port are included in the summary.
 
+The embedded account table formats the proxy URL and effective port as a complete
+address, for example `http://203.0.113.7:10809`. Bare legacy hosts default to HTTP,
+and the separate port takes precedence over a port embedded in the URL. Badge text
+and tooltips omit credentials and path/query data. The displayed address is the
+configured proxy endpoint; `/accounts/:index/proxy-test` obtains the exit IP.
+
 **cURL**
 
 ```bash

@@ -40,6 +40,18 @@ export function buildAccountBody(fd, isEdit) {
     return body
 }
 
+export function formatProxyAddress(proxy) {
+    const value = String(proxy?.url ?? '').trim()
+    if (!value) return ''
+    try {
+        const address = new URL(/^[a-z][a-z\d+.-]*:\/\//i.test(value) ? value : `http://${value}`)
+        const port = String(proxy.port ?? '').trim() || address.port
+        return `${address.protocol}//${address.hostname}${port ? `:${port}` : ''}`
+    } catch {
+        return '代理地址无效'
+    }
+}
+
 export function createAccountsView({ api, state, toast }) {
     let closeActiveModal = null
     let active = () => false
@@ -121,14 +133,15 @@ export function createAccountsView({ api, state, toast }) {
                     'tbody',
                     {},
                     data.accounts.map(account => {
+                        const proxyAddress = formatProxyAddress(account.proxy)
                         const proxyBadge = account.proxy
                             ? h(
                                   'span',
                                   {
                                       class: 'badge blue',
-                                      title: account.proxy.url + (account.proxy.port ? ':' + account.proxy.port : '')
+                                      title: proxyAddress
                                   },
-                                  `${account.proxy.url.split(':')[0]}://${account.proxy.port ?? ''}${account.proxy.hasCredentials ? ' 🔑' : ''}`
+                                  `${proxyAddress}${account.proxy.hasCredentials ? ' 🔑' : ''}`
                               )
                             : h('span', { class: 'badge gray' }, '直连')
                         return h(

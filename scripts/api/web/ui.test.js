@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { createApi, esc, fmtInt, fmtTime, h, pageGuard } from './ui.js'
-import { buildAccountBody, createAccountsView } from './accounts.js'
+import { buildAccountBody, createAccountsView, formatProxyAddress } from './accounts.js'
 import { mergeLogs, createLogsView } from './logs.js'
 
 test('createApi sends JSON headers and returns parsed success payloads', async () => {
@@ -174,6 +174,72 @@ test('account session-save button starts only maintenance login and routes to co
             view.dispose()
             if (previousLocation === undefined) delete globalThis.location
             else globalThis.location = previousLocation
+        }
+    }))
+
+test('proxy addresses keep hostname and one effective port for bare, HTTP, HTTPS and IPv6 inputs', () => {
+    for (const [proxy, expected] of [
+        [{ url: '203.0.113.7', port: '19450' }, 'http://203.0.113.7:19450'],
+        [{ url: 'http://203.0.113.8', port: '10809' }, 'http://203.0.113.8:10809'],
+        [{ url: 'https://proxy.example.invalid', port: '443' }, 'https://proxy.example.invalid:443'],
+        [{ url: 'http://proxy.example.invalid:8080' }, 'http://proxy.example.invalid:8080'],
+        [{ url: 'http://proxy.example.invalid:8080', port: '10809' }, 'http://proxy.example.invalid:10809'],
+        [{ url: 'socks5://[2001:db8::1]', port: '1080' }, 'socks5://[2001:db8::1]:1080'],
+        [
+            { url: 'http://synthetic-user:synthetic-secret@proxy.example.invalid:8080/path?token=private' },
+            'http://proxy.example.invalid:8080'
+        ],
+        [{ url: 'http://proxy.example.invalid' }, 'http://proxy.example.invalid'],
+        [{ url: 'http://' }, '代理地址无效'],
+        [null, '']
+    ])
+        assert.equal(formatProxyAddress(proxy), expected)
+})
+
+test('account table renders full proxy host and port in badges and tooltips without credentials', async () =>
+    withNativeDocument(async ({ main }) => {
+        const accounts = [
+            { index: 4, email: 'bare@example.invalid', proxy: { url: '203.0.113.7', port: '19450' } },
+            { index: 6, email: 'http@example.invalid', proxy: { url: 'http://203.0.113.8', port: '10809' } },
+            {
+                index: 7,
+                email: 'tls@example.invalid',
+                proxy: {
+                    url: 'https://synthetic-user:synthetic-secret@proxy.example.invalid:8080',
+                    port: '443',
+                    hasCredentials: true
+                }
+            }
+        ]
+        const view = createAccountsView({
+            api: async () => ({ accounts }),
+            state: { routeGeneration: 1, me: { authenticated: true, capabilities: { accountWrite: false } } },
+            toast: () => {}
+        })
+        try {
+            await view.viewAccounts()
+            const texts = []
+            const titles = []
+            const visit = node => {
+                if (node.className === 'badge blue') {
+                    texts.push(node.children.map(child => child.textContent ?? '').join(''))
+                    titles.push(node.attributes.get('title'))
+                }
+                for (const child of node.children ?? []) visit(child)
+            }
+            visit(main)
+            assert.deepEqual(texts, [
+                'http://203.0.113.7:19450',
+                'http://203.0.113.8:10809',
+                'https://proxy.example.invalid:443 🔑'
+            ])
+            assert.deepEqual(titles, [
+                'http://203.0.113.7:19450',
+                'http://203.0.113.8:10809',
+                'https://proxy.example.invalid:443'
+            ])
+        } finally {
+            view.dispose()
         }
     }))
 
