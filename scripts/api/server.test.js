@@ -64,7 +64,7 @@ async function freeLoopbackPort() {
     }
 }
 
-async function fixture(t, { env = {}, accounts = {}, webAccounts = '' } = {}) {
+async function fixture(t, { env = {}, accounts = {}, webAccounts = '', realProxyTests = false } = {}) {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), 'mrs-http-contract-'))
     const requests = new Set()
     let child
@@ -129,7 +129,9 @@ async function fixture(t, { env = {}, accounts = {}, webAccounts = '' } = {}) {
     // the disposable copy: no third-party agents or external network can run.
     await fs.writeFile(
         path.join(copiedApi, 'proxyTester.js'),
-        "export function testProxy() { throw new Error('Unexpected proxy/network task in HTTP contract test') }\n"
+        realProxyTests
+            ? `export { testProxy } from ${JSON.stringify(new URL('./proxyTester.js', import.meta.url).href)}\n`
+            : "export function testProxy() { throw new Error('Unexpected proxy/network task in HTTP contract test') }\n"
     )
     await fs.copyFile(path.join(apiDir, '..', 'env.js'), path.join(root, 'scripts', 'env.js'))
     await fs.copyFile(path.join(apiDir, '..', 'credentialEnv.cjs'), path.join(root, 'scripts', 'credentialEnv.cjs'))
@@ -351,6 +353,37 @@ test(
             assert.deepEqual(await api.json('/history', { headers: tokenHeaders }), history)
             assert.deepEqual(await api.json('/accounts', { headers: tokenHeaders }), before)
             assert.equal((await api.json('/points/history', { headers: tokenHeaders })).totals.collected, 12)
+        }
+    }
+)
+
+test(
+    'repeated HTTPS proxy handshake failures through the real API never terminate the controller',
+    testOptions,
+    async t => {
+        const sockets = new Set()
+        const proxy = net.createServer(socket => {
+            sockets.add(socket)
+            socket.once('data', () => socket.end())
+            socket.on('error', () => {})
+            socket.on('close', () => sockets.delete(socket))
+        })
+        t.after(async () => {
+            for (const socket of sockets) socket.destroy()
+            await new Promise(resolve => proxy.close(resolve))
+        })
+        await new Promise(resolve => proxy.listen(0, '127.0.0.1', resolve))
+        const api = await fixture(t, {
+            realProxyTests: true,
+            env: { API_PROXY_TEST_TIMEOUT_MS: '1000' },
+            webAccounts: `ACCOUNT_6_EMAIL=proxy@example.invalid\nACCOUNT_6_PROXY_URL=https://127.0.0.1\nACCOUNT_6_PROXY_PORT=${proxy.address().port}\n`
+        })
+        for (let attempt = 0; attempt < 3; attempt++) {
+            const result = await api.json('/accounts/6/proxy-test', { method: 'POST', headers: tokenHeaders, body: {} })
+            assert.equal(result.ok, false)
+            assert.match(result.error, /http:\/\//)
+            assert.equal((await api.json('/health')).ok, true)
+            assert.equal((await api.json('/status', { headers: tokenHeaders })).state, 'idle')
         }
     }
 )

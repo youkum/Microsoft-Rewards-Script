@@ -536,6 +536,10 @@ docker compose restart          # 快捷重启
 - HTTP 代理认证：`ACCOUNT_N_PROXY_USERNAME` / `ACCOUNT_N_PROXY_PASSWORD`（Patchright 不支持 SOCKS 浏览器认证）
 - 查询源请求代理：`ACCOUNT_N_PROXY_HTTP=true` 并配置 `ACCOUNT_N_PROXY_*`
 
+代理商标注“支持 HTTPS”通常表示支持 HTTPS 网站的 CONNECT 转发，此时代理地址使用 `http://主机`；仅当入口本身提供 TLS 时使用 `https://主机`。端口按供应商提供的代理端口填写，用户名/密码认证填写独立字段，IP 白名单认证需放行服务器实际出口 IP。
+
+“测代理”优先使用 HTTPS 回显并尝试备用服务。连接可用但回显服务被限制时，面板提示“代理已连通，但出口 IP 查询失败”；测试得到的 IP 来自回显服务，代理主机地址无法替代出口 IP。HTTPS 握手失败会返回错误，修复后的测试组件会捕获断开和超时异常。
+
 > ⚠️ `ignoreCertificateErrors` 会削弱整个浏览器上下文的 TLS 保护，仅在受信拦截代理无法出示有效证书时开启。
 
 </details>

@@ -1033,10 +1033,20 @@ web-managed accounts too.
 - `DELETE /accounts/:index` — remove a web-managed slot. `409 NOT_WEB_MANAGED`
   for `.env` slots (delete those by editing `.env`).
 - `POST /accounts/:index/proxy-test` — send a request through that account's
-  proxy to an IP echo service; returns `{ok, ip, country, countryCode, latencyMs}`
-  or `{ok: false, error}`. Supports http/https/socks4/socks5; SOCKS credentials
-  are rejected (matching the browser's limitation). Hard timeout via
-  `API_PROXY_TEST_TIMEOUT_MS` (default 10000).
+  proxy to HTTPS IP echo services, then a legacy echo fallback. Returns
+  `{ok: true, connected: true, ip, country, countryCode, latencyMs, target}`
+  on a valid IP response. If all echoes fail but Bing HTTPS is reachable, returns
+  `{ok: false, connected: true, ip: null, code: "IP_ECHO_UNAVAILABLE", error}`.
+  Connection failures return `{ok: false, connected: false, error, latencyMs}`.
+  Supports http/https/socks4/socks5; SOCKS credentials are rejected (matching
+  the browser's limitation). Each target has a cancellable deadline of
+  `API_PROXY_TEST_TIMEOUT_MS` (default 10000), including connect/TLS/body reads.
+  Handshake EOF, authentication failure and response aborts return errors rather
+  than escaping as unhandled socket exceptions. No direct-network fallback is used.
+
+HTTP CONNECT proxies can access HTTPS websites using a proxy address starting
+with `http://`. A proxy address starting with `https://` requires the proxy endpoint
+itself to accept TLS. An exit IP is displayed only when an echo service returns one.
 
 Account add/update/delete endpoints are gated by `API_ALLOW_ACCOUNT_WRITE`
 (default `true`).

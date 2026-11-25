@@ -177,6 +177,41 @@ test('account session-save button starts only maintenance login and routes to co
         }
     }))
 
+test('proxy test shows a real exit IP and distinguishes unavailable echo from connection failure', async () =>
+    withNativeDocument(async ({ main }) => {
+        const results = [
+            { ok: true, connected: true, ip: '203.0.113.8', latencyMs: 50 },
+            { ok: false, connected: true, ip: null, code: 'IP_ECHO_UNAVAILABLE' },
+            { ok: false, connected: false, error: '代理要求认证。' }
+        ]
+        const toasts = []
+        const account = { index: 6, email: 'proxy@example.invalid', proxy: { url: 'http://proxy.invalid' } }
+        const state = { routeGeneration: 1, me: { authenticated: true, capabilities: { accountWrite: false } } }
+        const view = createAccountsView({
+            api: async route => (route === '/accounts' ? { accounts: [account] } : results.shift()),
+            state,
+            toast: (message, type) => toasts.push({ message, type })
+        })
+        try {
+            await view.viewAccounts()
+            const button = find(
+                main,
+                node => node.tagName === 'BUTTON' && node.children.some(child => child.textContent === '测代理')
+            )
+            for (let attempt = 0; attempt < 3; attempt++) await button.events.get('click')()
+            const messages = toasts.filter(item => item.type)
+            assert.match(messages[0].message, /203\.0\.113\.8/)
+            assert.equal(messages[0].type, 'success')
+            assert.match(messages[1].message, /已连通.*IP 查询失败/)
+            assert.equal(messages[1].type, 'warn')
+            assert.equal(messages[1].message.includes('null'), false)
+            assert.match(messages[2].message, /认证/)
+            assert.equal(messages[2].type, 'error')
+        } finally {
+            view.dispose()
+        }
+    }))
+
 test('h sets false native checked/selected properties without present boolean attributes', async () =>
     withNativeDocument(() => {
         for (const [tag, property] of [

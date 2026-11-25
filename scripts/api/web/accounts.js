@@ -255,11 +255,13 @@ export function createAccountsView({ api, state, toast }) {
         toast(`正在测试 ${account.email} 的代理…`)
         try {
             const result = await api(`/accounts/${account.index}/proxy-test`, { method: 'POST', body: {} })
-            if (result.ok) {
+            if (result.ok && result.ip) {
                 toast(
                     `✅ 代理连通:出口 IP ${result.ip}${result.country ? `(${result.country})` : ''},延迟 ${result.latencyMs}ms`,
                     'success'
                 )
+            } else if (result.connected) {
+                toast('代理已连通，但出口 IP 查询失败。请稍后重试或检查代理的目标限制。', 'warn')
             } else {
                 toast(`❌ 代理测试失败:${result.error}`, 'error')
             }
@@ -536,7 +538,7 @@ export function createAccountsView({ api, state, toast }) {
                 h(
                     'p',
                     { class: 'hint' },
-                    '支持 http/https/socks4/socks5;SOCKS 不支持账号认证。编辑时留空密码 = 保持原密码。'
+                    'HTTP CONNECT 可访问 HTTPS 网站，地址通常填 http://。https:// 要求代理入口本身支持 TLS。SOCKS 不支持账号认证。编辑时留空密码保留原值。'
                 )
             ),
             h(
